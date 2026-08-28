@@ -1,371 +1,81 @@
-# Multivoid
+# Multivoid — форк для личной сборки
 
-> **Multiplayer for Voices of the Void.**
-> A standalone mod that adds drop-in co-op to a single-player UE4.27 game —
-> **no original game files are modified**.
+Это личный форк [Multivoid](https://github.com/VOTV-MP/Multivoid) — кооперативного мода на 4 игроков для **Voices of the Void**. Оригинал написал **pelmentor**, сайт проекта — [multivoid.dev](https://multivoid.dev/).
 
-| | |
-|--|--|
-| **Current build** | the newest `multivoid-<game>-<N>.dll` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the DLL filename carries the identity) |
-| **Game target** | Voices of the Void Alpha **0.9.0n** |
-| **Status** | Alpha — dev prereleases published for testing; no stable release yet |
-| **Players** | up to **4** (host + 3) |
-| **Platform** | Windows · UE4.27 · LAN + Internet |
-| **Website** | [multivoid.dev](https://multivoid.dev) |
-| **Community** | [Discord](https://discord.gg/bA6tGBvGMN) — chat about the project, ask questions, report bugs |
+Форк собран для игры с друзьями, а не для распространения. Оригинальное описание автора лежит рядом в [`README.upstream.md`](README.upstream.md) — там вся правда про архитектуру, сборку и безопасность.
+
+> У оригинального проекта **нет файла лицензии**. По умолчанию это означает «все права защищены»: код можно читать и присылать автору правки через GitHub, но перевыкладывать его или строить на нём что-то своё юридически не разрешено.
 
 ---
 
-## Current phase
+## Что изменено относительно оригинала
 
-The project follows an 8-phase long-term arc (the MTA / gmod trajectory — see
-[Roadmap](#roadmap) below). We are in **Phase 1: functional co-op** — the deep-sync
-phase where VOTV's single-player systems are taken apart one by one and made
-multiplayer-correct on a standalone engine-extension substrate. The multiplayer
-foundation (transport, sessions, master server, join/save pipeline) is built and
-live; the remaining Phase-1 work is hands-on verification breadth and the tail of
-game systems still to sync.
+### Тарелки перестали дёргаться (`[dish]`)
 
-### How far along is that
+**Что было.** Хост рассылает позы 24 тарелок четыре раза в секунду. Клиент записывал позу в движок мгновенно и **только в момент прихода пакета**. Между пакетами картинка была заморожена, а раз в 250 мс тарелка телепортировалась в новое положение. На глаз — ступенчатое, рваное движение при каждом повороте.
 
-The honest, granular answer — **what we sync and what we don't, system by
-system** — is the main coverage document:
-**[`docs/COOP_SYNC_PROFILES.md`](docs/COOP_SYNC_PROFILES.md)**. It opens with a
-master table of ~67 co-op systems (~215 facets), each carrying a verdict
-(works / broken / unknown / not-built), an evidence tier, and who owns the
-write, followed by a per-system catalog with a "what we do NOT sync" line for
-each. Start there. Every wire lane in the game is accounted for in it (113
-reliable message kinds + 13 pose/state streams, all cross-checked); facet-level
-completeness is deliberately never claimed — the honest output is a count with a
-named residual, not a checkmark.
+**Что стало.** Тарелкам выдано окно интерполяции `coop::LerpWindow` — тот самый механизм, которым в проекте уже ездят чужие игроки и NPC. Приход пакета задаёт цель и запоминает ошибку по кратчайшей дуге, а покадровый привод размазывает её во времени. Тарелка едет плавно.
 
-We also deliberately don't publish a single "N% done" figure — a co-op mod is
-finished system by system, not on one bar, and any summed percentage would hide
-which systems are solid and which are untouched. The one honest headline count,
-generated from the game's own class dump by
-[`tools/coverage.py`](tools/coverage.py): of **2291** game classes, **1453** can
-actually diverge between peers, and our code names **175** of them. The
-measurement error on each rung, and why a finer verb-level percentage isn't yet
-honest, are recorded in the project's research corpus, which is kept privately.
+Детали, которые оказались важнее, чем кажется:
+
+- **Окно 300 мс**, а не 75 мс как у соседей. Соседи получают пакеты 20 раз в секунду, тарелки — 4. С окном в 75 мс тарелка ехала бы 75 мс и стояла оставшиеся 175 — та же ступенька, просто мельче.
+- **Конец поворота доезжает, а не прыгает.** Строка «тарелка остановилась» не снапит позу, а доводит её интерполяцией. Иначе рывок никуда не девался, а просто переезжал в конец каждого движения — самое заметное место.
+- **Покой, первый пакет и снапшот по-прежнему снапят.** Это сбросы истины, а не выборки потока: стоящая тарелка не должна плыть, а входной снимок мира обязан примениться целиком.
+- **ARM гасит незакрытое окно.** Команда ARM ориентируется на состояние интерполяции, а не на флаг движения — тот успевает сброситься раньше, чем окно откроется, и тарелка доезжала уже после команды.
+- **Свой локальный цикл не перебивается.** Покадровый привод использует ту же защиту от собственного пинга, что и приёмник пакетов, одним общим предикатом — чтобы они не разъехались при будущих правках.
+- **Диагностика за флагом.** Строка `pose-diag` включается штатным флагом `interactable_log`, по умолчанию молчит.
+
+Изменены три файла: `dish_sync.cpp`, `dish_sync.h`, и строка 324 в `docs/COOP_SYNC_PROFILES.md`.
+
+**Вердикт в документации намеренно оставлен `B` (сломано).** У проекта строгое правило: починка, которую не переиграли на живом стенде, не повышается до «работает». Код написан и проверен статически, но в игре ещё не откатан.
+
+### Заплатка для сборки (`[ci]`)
+
+В `session_status.cpp` добавлена одна строка-аннотация. Она не меняет поведение: без неё не проходит собственный контроль проекта `peerconn_gate`, который требует размечать каждую запись в слоты пиров. На момент форка эта проверка падала и в оригинальном `main` — то есть у автора сборка тоже красная, и правка нужна лишь для того, чтобы дойти до компилятора. **Наверх такое не отправляют.**
 
 ---
 
-## What works today
+## Как проверялось
 
-### Multiplayer foundation
-- **LAN and Internet sessions** — one host, up to three clients; direct IP or the
-  built-in **server browser** backed by the official master server
-  (NAT traversal via signaling + TURN)
-- **Version identity + join gate** — lobbies advertise `game + build`
-  (e.g. `0.9.0n b125`); mismatched peers are refused pre-flight with a clear popup
-  instead of desyncing mid-game. Old cohorts keep playing together forever —
-  updates are never forced
-- **Visible remote players** — full body, legs, IK feet, per-player skins,
-  animated locomotion, ragdoll mirroring
-- **Floating nameplates** with nickname + live ping, **chat**, and a system event
-  feed (joins, leaves, activity lines)
-- **Voice chat** — 3D positional, in-world
-- **Join at any time** — connecting clients receive the host's full world state
-  (a save-transfer snapshot), and **mid-activity join is a supported case by
-  design**: joining mid-event, mid-download, mid-drive, mid-anything is handled
-  per-system, never "don't join during X"
-
-### Synced world
-- **Physics props** — pickup, drag, drop, throw across the ~540 `Aprop_C` classes,
-  including client-born props, per-grab authority transfer, and stable cross-peer
-  identity that survives saves and rejoins
-- **Piles and trash collection** — the full pickup/carry/deposit economy loop
-- **NPCs and creatures** — host-simulated, pose-streamed to clients; kerfurs
-  including the prop⇄NPC conversion cycle and per-kerfur skins
-- **World events** — the scheduled/story event system replays host-observed events
-  on clients with per-event dupe policies
-- **Weather** — rain, snow, fog, wind, lightning; host-authoritative (clients
-  never roll their own RNG — shared-world randomness is host-owned as a rule)
-- **Doors, lights, switches, keypads, terminals**, sleep, damage/hazards,
-  world-prop progression (drying, curing, growing — host owns the clock)
-
-### The signal-processing pipeline (the heart of VOTV)
-End-to-end sync of the workstation: dish control and calibration → ping →
-signal catch → downloads → decoding → playback deck → drives and racks →
-the in-game laptop (shared editable buffer, floppies, discs) → the meadow
-signal database. Presser-authored state, one authority per axis, with the
-desk's audio feedback mirrored to observers at the native audio seam.
-
-### Infrastructure
-- **Standalone loader** — `xinput1_3.dll` proxy + the versioned
-  `multivoid-<game>-<build>.dll` payload
-- **Official master server** — a static Rust binary on our VPS (lobby list,
-  update check, signaling); the update check is informational only, never a gate
-- **Kill switch** in the ini for emergency ship lockdown
+- Три круга ревью: код писал Antigravity, проверял Codex (`gpt-5.6-sol`, высокий режим рассуждений). Первые два круга — «вернуть на доработку», третий — принято.
+- Два круга нашли не косметику: сначала то, что рывок просто переезжал в конец поворота и фикс обнулял сам себя, потом две регрессии, которые внёс уже сам фикс.
+- Сборка на GitHub Actions — зелёная, `Build (Release)` прошёл.
+- **В игре не проверено.** Ни одного живого сеанса на двух машинах не было.
 
 ---
 
-## How it works
+## Установка
 
-VOTV runs on Unreal Engine 4.27. The mod is a single DLL pair:
+Две DLL кладутся рядом с `VotV-Win64-Shipping.exe`:
 
 ```
-xinput1_3.dll                  -- thin proxy loader (Windows auto-loads it next to the .exe)
-multivoid-<game>-<build>.dll   -- the mod payload (versioned filename; highest build wins)
+<папка игры>\VotV\Binaries\Win64\
+    xinput1_3.dll               прокси, игра грузит его сама
+    multivoid-0.9.0n-143.dll    полезная нагрузка
 ```
 
-The payload resolves engine primitives (`GUObjectArray` / `GNames` /
-`ProcessEvent`) via AOB signatures, then drives VOTV's own
-`UClass` / `UFunction` machinery through reflection — no asset edits,
-no `.pak` repacks, no UE4SS at runtime. Where ProcessEvent can't see
-(Blueprint-internal dispatch), a bytecode-level VM interception substrate
-catches the invisible verbs.
+Файлы игры и `.pak` не трогаются. Откат — удалить эти два файла.
 
-Transport is **GameNetworkingSockets** (Valve's UDP library) carrying an
-unreliable pose stream plus a reliable ordered channel for events and state.
-Each machine's local UE engine re-derives animation, physics, and rendering
-from the streamed state. The host is authoritative for world state, RNG, and
-NPC simulation; per-grab authority transfers for held props.
+Собрать свежие DLL без установки компилятора: в разделе Actions запустить workflow `build` вручную и скачать артефакт `multivoid-ci-<sha>`.
 
-The codebase splits along a strict two-layer principle:
-- [`src/votv-coop/src/ue_wrap/`](src/votv-coop/src/ue_wrap/) — engine wrapper (reflection, offsets, hooks; no gameplay)
-- [`src/votv-coop/src/coop/`](src/votv-coop/src/coop/) — gameplay/network layer (element identity, sync lanes, sessions)
-- [`src/votv-coop/src/harness/`](src/votv-coop/src/harness/) — boot glue + autonomous test scenarios
+### Диагностика тарелок
 
----
-
-## Versioning
-
-The version identity is the pair **(game version, build number)** — there is
-no separate mod semver.
+Включается флагом `interactable_log`. В логе клиента появится строка вида:
 
 ```
-multivoid-<game>-<build>.dll   ->   e.g. game target 0.9.0n, build <N>
+[dish] pose-diag: 3 interpolating, 3 moving (maxErr=12.4 deg)
 ```
 
-- **Game target** (`0.9.0n`) bumps when we adapt to a new VOTV cook
-  (reflection offsets and BP layouts shift between game versions).
-- **Build number** (`b<N>`) is the wire-protocol revision — it bumps with every
-  release and every wire-format change.
-- **Join compatibility is byte-equality on the pair, per lobby.** When VOTV
-  0.10.0 ships we adapt immediately, but 0.9.0n cohorts keep playing among
-  themselves on their old builds — updates are never forced. The server browser
-  shows each lobby's pair and marks mismatches before you click.
-
-Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
-(`VOTVCOOP_GAME_TARGET` + the build number parsed from `protocol.h`).
+Если ошибка держится в разумных пределах и не растёт скачками — интерполяция работает. Резкие всплески означают, что зеркало голодает без пакетов.
 
 ---
 
-## Quick start
+## Важные ограничения
 
-### For players
+**У всех игроков должны быть ровно эти файлы.** Мод сверяет пару «версия игры + номер билда» побайтово и отказывает в подключении при малейшем расхождении. Раздавать друзьям надо именно наши DLL, а не скачанные с сайта проекта.
 
-> **There is no stable release yet — every build on the
-> [Releases page](https://github.com/VOTV-MP/Multivoid/releases) is a dev build,
-> and everyone playing one is a tester.** Expect bugs, and please report them on
-> [Discord](https://discord.gg/bA6tGBvGMN) — good reports get credited in
-> [Field reports](#field-reports). Full
-> disclaimer and what to attach: **[docs/INSTALL.md](docs/INSTALL.md)**.
+**Версия игры — 0.9.0n.** На другой версии мод не запустится.
 
-Download **both** files from the release page, drop them next to the game
-executable, launch — a **Multiplayer** button appears in the main menu. No port
-forwarding needed. Full steps, updating, and troubleshooting:
-**[docs/INSTALL.md](docs/INSTALL.md)**.
+**Форк быстро устаревает.** В оригинале десятки коммитов в день. Через неделю-другую наша ветка отстанет; чтобы обновиться, правку придётся переносить на свежий `main` и пересобирать.
 
-To uninstall, delete the two DLLs. The mod never touches the game's own files.
-
-### For developers
-
-Full guide: [BUILDING.md](BUILDING.md) — local toolchain setup, troubleshooting,
-and **building via GitHub Actions** (no local toolchain needed: fork, dispatch
-the `build` workflow, download the DLL artifact).
-
-Requirements: Windows 10+, Visual Studio 2019/2022 **Build Tools** (C++ workload),
-CMake 3.20+, and a legitimate copy of Voices of the Void at `Game_0.9.0n_HOST/`
-next to the repo.
-
-```powershell
-# Configure once:
-cmake -B build/votv-coop -S src/votv-coop -G "Visual Studio 16 2019" -A x64
-
-# Build:
-cmake --build build/votv-coop --config Release
-```
-
-Dev-only launchers (deploy the fresh build + start the game with a pinned
-role/port — never how players run the mod):
-
-```powershell
-./mp_host_game.bat                 # host, default port 47621
-./mp_client_connect.bat <host-ip>  # client
-```
-
-Same-PC testing? Use the sibling `Game_0.9.0n_CLIENT_1/` install — the launchers
-detect it automatically. The autonomous two-peer test harness lives in `tools/`.
-
----
-
-## Community
-
-**Chat about the project, ask questions, or get in touch:
-[discord.gg/bA6tGBvGMN](https://discord.gg/bA6tGBvGMN)** — the *Pelmentor's server* Discord.
-
-It's the fastest way to reach the author, follow development as it happens, and find
-people to test co-op with. Bug reports and feedback are welcome there or in
-[GitHub issues](https://github.com/VOTV-MP/Multivoid/issues).
-
-## Field reports
-
-Multivoid is tested in the field by the people playing it, and their reports
-drive real fixes. Every tester whose report changed the mod is credited here.
-
-| Tester | Reported | Build |
-|--|--|--|
-| **Violet** (Discord) | ~9 FPS for a friend joining on Linux — the triage behind it found five separate defects | b134 |
-| **decodinatorX** ([issue #5](https://github.com/VOTV-MP/Multivoid/issues/5)) | Couldn't type `sv.request` at the SAT console — `T` kept opening chat | b133 |
-| **huoyan1231** + **gediao** (Discord) | A full host log from a real b125 session — became a ten-row triage map | b134 |
-| **SirWilliam** (Discord) | Rejoining a session requires fully relaunching the game | queued |
-
-**Full reports — what each one turned out to be and what shipped:
-[docs/FIELD_REPORTS.md](docs/FIELD_REPORTS.md).**
-
----
-
-## Ecosystem
-
-| Repo / place | What |
-|--|--|
-| [`VOTV-MP/Multivoid`](https://github.com/VOTV-MP/Multivoid) | **This repo** — the mod itself |
-| [`VOTV-MP/Multivoid-server`](https://github.com/VOTV-MP/Multivoid-server) | The dedicated server (see roadmap phases 6 and 8) |
-| [`VOTV-MP/Multivoid-wiki`](https://github.com/VOTV-MP/Multivoid-wiki) | User-facing documentation |
-| [multivoid.dev](https://multivoid.dev) | Project website |
-| [Discord](https://discord.gg/bA6tGBvGMN) | Community + project chat |
-
-Repository layout:
-
-| Path | What |
-|--|--|
-| [`docs/`](docs/README.md) | **Start here** — the documentation index: architecture, roadmap, scope, per-system sync docs, lessons ledger |
-| [`docs/VERSION_MIGRATION.md`](docs/VERSION_MIGRATION.md) | **What happens when VOTV updates** — the measured version surface, the port runbook, the gates |
-| [`reference/`](reference/) | Vendored read-only references (UE4SS, MTA:SA, MinHook, GNS) |
-| [`src/votv-coop/`](src/votv-coop/) | Mod source (`ue_wrap` / `coop` / `harness` / `loader` / `ui`) |
-| [`tools/`](tools/) | Build / deploy / launch / autonomous-test helpers + the master server source |
-| `Game_0.9.0n_HOST*/` | Local game install(s). **Gitignored** — never committed |
-
----
-
-## Roadmap
-
-The long-term arc, in order (each phase gates the next — detail in
-[`docs/ROADMAP.md`](docs/ROADMAP.md)):
-
-| # | Phase | Status |
-|--|--|--|
-| 1 | **Functional co-op** — deep sync of VOTV's systems on the standalone substrate | **in progress (current)** |
-| 2 | **The arbiter** — per-element authority moves into a separate, engine-free server process; the host's game becomes an ordinary client of it | planned |
-| 3 | **Sandbox mode** — support VOTV's sandbox rules as an explicit, portable "mode" layer | planned |
-| 4 | **LuaJIT embedding** — the scripting substrate over the engine/coop APIs | planned |
-| 5 | **Lua API** — mode rules move to Lua; the C++ core (transport, sync, identity) stays native | planned |
-| 6 | **Resource system** — custom modes and plugins as one mechanism (the MTA shape) | planned |
-| 7 | **Dedicated server** — 24/7 hosting with no live player required; the same server binary phase 2 already ships, launched by hand instead of spawned by the game | planned |
-| 8 | **Resource infrastructure** — client-side resource download, sandboxing, public server browser | planned |
-
-The old phase 8 ("native standalone server") was **retired as a phase** on 2026-07-20: the server is a
-separate process from phase 2 onward, and its authority grows with every sync lane, so the MTA endgame
-arrives by accumulation rather than as a milestone. See
-[`docs/COOP_SERVER_MODEL.md`](docs/COOP_SERVER_MODEL.md).
-
----
-
-## Architecture
-
-Built on **eight architectural principles** documented in
-[`docs/COOP_METHODOLOGY.md`](docs/COOP_METHODOLOGY.md):
-
-1. **No modification of original game files**
-2. **Engine-extension paradigm** — the mod is a new engine layer, not a patch
-3. **Parallel class hierarchy** — our `RemotePlayer` owns network state; UE owns rendering
-4. **Targeted crash fixes, not broad suppression**
-5. **Minimum viable subset** — scope is a living document
-6. **Augment SP, never replace it** — co-op is layered ON single-player
-7. **Engine-wrapper layer vs gameplay/network layer** — strict subtree split
-8. **Mid-activity join is always handled** — every sync lane defines its late-join answer
-
-Three "no-compromise" rules govern day-to-day work:
-- **RULE 1** — No crutches, no quick fixes. Root cause every time.
-- **RULE 2** — No migration baggage. Old code goes when replaced.
-- **RULE 3** — Standalone mod. UE4SS is a dev tool only; not loaded at runtime.
-  (**DECISION REVERSED 2026-08-21** — Multivoid is migrating into the UE4SS mod
-  ecosystem as a normal UE4SS mod folder; the dated ledger entry with the full
-  reasoning is in [docs/VERSION_MIGRATION.md §11](docs/VERSION_MIGRATION.md).
-  The SHIPPING mod remains standalone exactly as described here until that
-  migration ships.)
-
----
-
-## Credits
-
-Multivoid is written and directed by one person (Pelmentor) with heavy use of
-AI coding tools — direction, architecture, testing and every release decision
-are mine; much of the code was written with Claude. The full commit history is
-public, so you can judge the process as well as the result.
-
-Outside contributions are welcome, and they are credited here:
-
-| Contributor | Contribution |
-|--|--|
-| [arigalit](https://github.com/arigalit) | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)) — a peer walking up to an ATV somebody else is already driving is now denied at the input seam, instead of both engines running vehicle physics and fighting over the body. Also reported the join-time prop-count divergence with paired host/client logs. |
-
-Prior art this project learned from, with thanks:
-
-| Project | What it gave Multivoid |
-|--|--|
-| [MTA:SA](https://github.com/multitheftauto/mtasa-blue) (GPLv3, vendored read-only) | The architectural precedent: the parallel class hierarchy, per-element syncers, keysync shape, host-authoritative AI. Multivoid follows MTA's shapes deliberately — no MTA code is copied. |
-| [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) (MIT) | The UE4 modding substrate this project stands on: its reflection algorithms are ported (with attribution in the source), and it remains a development tool here — SDK header dumps, Blueprint dumps, live inspection. It does not ship and is not required to play. |
-| [MinHook](https://github.com/TsudaKageyu/minhook) (MIT) | The x64 trampoline hooking engine (vendored). |
-| **VoidTogether** | The first multiplayer attempt for VOTV, and useful to read while designing this one. No VoidTogether code is in Multivoid (it is a JS server; this is a C++ in-process mod), but two things came from studying it and are cited in the source where they are used: the nickname-sanitizer approach ([`player_handshake.cpp`](src/votv-coop/src/coop/session/player_handshake.cpp)) and widget-styling comparisons that shaped the nameplate look ([`engine_widget.cpp`](src/votv-coop/src/ue_wrap/engine/engine_widget.cpp)). |
-| [Dear ImGui](https://github.com/ocornut/imgui) (MIT), [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) (BSD), [Opus](https://opus-codec.org/) (BSD), [FreeType](https://freetype.org/) (FTL), [miniaudio](https://miniaud.io/) (MIT/public domain) | Vendored libraries — UI, transport, voice, text rendering, audio. |
-
-## Legal
-
-This is a **hook-only standalone mod**. It contains **no Voices of the Void
-code or assets**. You must own a legitimate copy of the game to use it.
-
-Distributed under the same terms as the upstream references it borrows from:
-**MIT** for MinHook and the UE4SS-derived reflection algorithms. Unaffiliated
-with the VOTV authors.
-
----
-
-### A note from the author
-
-This project is a free labour of love. I discovered VOTV in 2023 and played it
-for weeks relentlessly, and I've been coming back every year since to explore
-its new features. Every one of those runs was a great solo experience — and
-eventually I wanted to share it with someone in multiplayer.
-
-Let me be upfront: I'm not a programmer. Or rather, I am one — just with far
-less baggage than a project of this magnitude demands. My roles here are
-coordinator, director, tester, and architect.
-
-I've always been into modding. My first mods were for GTA:SA when I was 10 or
-11 — simple things like new objects on the map. Later I ran a SA-MP server with
-my own gamemode, and a few Minecraft servers, and along the way I picked up how
-it all actually works underneath. At some point I got into assembly-level mods
-with Cheat Engine and learned a few things there — what opcodes are, how memory
-scanning works, and so on — and made basic mods for some old games that way.
-
-I never went especially deep, but that experience turned out to be useful
-enough when I decided to build this project with Fable-5.
-
-Going in, I already knew about projects like SA-MP and MTA, so I had somewhere
-to pull principles and methodology from — and I did. Today's AI tools are
-genuinely something, and combining them with IDA 9 over MCP, a proper
-methodology, and agents analyzing Kismet bytecode gave me the dev environment
-and the virtual team I needed.
-
-To anyone hating on AI or AI-produced code: if you used AI for programming and
-got garbage results, it means either your process is the problem or your tool
-is a cheap one. Get a better tool, try a better methodology, and always
-document your progress. Not just progress — document everything, every session.
-And document it properly.
-
----
-
-<sub>Multivoid is alpha software. Back up your saves before testing. Bug reports welcome.</sub>
+**Защиты от чужих в сессии нет.** Это ограничение самого Multivoid, а не форка: подлинность участников мод пока не проверяет, и автор об этом пишет прямо. Играть стоит только со своими.
