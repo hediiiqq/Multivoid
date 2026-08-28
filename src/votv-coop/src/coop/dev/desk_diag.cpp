@@ -270,9 +270,11 @@ void Tick() {
 
     // ---- line 3: cursor state (viewCoordinate=exhaust) + committed coords ----
     if (haveAim) {
-        UE_LOGI("[desk_diag] %c | aim(sel=%d dir=%u view=%.2f,%.2f[exhaust] "
+        UE_LOGI("[desk_diag] %c | aim(sel=%d dir=%u act=%d%d%d inPlace=%d triSz=%.1f,%.1f view=%.2f,%.2f[exhaust] "
                 "c0=%.2f,%.2f c1=%.2f,%.2f c2=%.2f,%.2f)",
                 role, aim.selected, static_cast<unsigned>(aim.direction),
+                aim.activeCoord[0] ? 1 : 0, aim.activeCoord[1] ? 1 : 0, aim.activeCoord[2] ? 1 : 0,
+                aim.coordsInPlace ? 1 : 0, aim.triSizeX, aim.triSizeY,
                 aim.viewX, aim.viewY, aim.c0X, aim.c0Y, aim.c1X, aim.c1Y, aim.c2X, aim.c2Y);
     }
 

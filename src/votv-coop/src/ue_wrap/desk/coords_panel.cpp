@@ -30,15 +30,21 @@ int32_t g_offCoordinate1 = -1;     // FVector2D @0x03C8
 int32_t g_offCoordinate2 = -1;     // FVector2D @0x03D0
 int32_t g_offSelected = -1;        // @0x03D8
 int32_t g_offDirection = -1;       // bool @0x0441 -- the catch-gate toggle (v70)
+int32_t g_offActiveCoord0 = -1;    // bool @0x0451
+int32_t g_offActiveCoord1 = -1;    // bool @0x0452
+int32_t g_offActiveCoord2 = -1;    // bool @0x0453
+int32_t g_offCoordsInPlace = -1;   // bool @0x0450
+int32_t g_offTriangleSize = -1;    // FVector2D @0x0438
 void* g_updCursorLocationsFn = nullptr;
 
-// The REQUIRED set (cls + the five aim offsets + the repaint verb) resolved --
-// the steady-state fast gate. Direction is OPTIONAL at the read site (as in
+// The REQUIRED set (cls + the five aim offsets + the four visibility flags + the repaint verb)
+// resolved -- the steady-state fast gate. Direction is OPTIONAL at the read site (as in
 // the pre-split code) but resolves in the same pass from the same class dump.
 bool g_required = false;
 std::chrono::steady_clock::time_point g_nextResolve{};
 
 void ResolvePass() {
+    static bool s_warned = false;
     const auto now = std::chrono::steady_clock::now();
     if (now < g_nextResolve) return;
     g_nextResolve = now + std::chrono::seconds(2);
@@ -57,17 +63,40 @@ void ResolvePass() {
             g_offSelected = R::FindPropertyOffset(g_uiCoordsCls, L"selected");
         if (g_offDirection < 0)
             g_offDirection = R::FindPropertyOffset(g_uiCoordsCls, L"Direction");
+        if (g_offActiveCoord0 < 0)
+            g_offActiveCoord0 = R::FindPropertyOffset(g_uiCoordsCls, L"activeCoord_0");
+        if (g_offActiveCoord1 < 0)
+            g_offActiveCoord1 = R::FindPropertyOffset(g_uiCoordsCls, L"activeCoord_1");
+        if (g_offActiveCoord2 < 0)
+            g_offActiveCoord2 = R::FindPropertyOffset(g_uiCoordsCls, L"activeCoord_2");
+        if (g_offCoordsInPlace < 0)
+            g_offCoordsInPlace = R::FindPropertyOffset(g_uiCoordsCls, L"coordsInPlace");
+        if (g_offTriangleSize < 0)
+            g_offTriangleSize = R::FindPropertyOffset(g_uiCoordsCls, L"triangle_size");
         if (!g_updCursorLocationsFn)
             g_updCursorLocationsFn = R::FindFunction(g_uiCoordsCls, L"updCursorLocations");
     }
 
     if (!g_required && g_uiCoordsCls && g_updCursorLocationsFn &&
         g_offViewCoordinate >= 0 && g_offCoordinate0 >= 0 && g_offCoordinate1 >= 0 &&
-        g_offCoordinate2 >= 0 && g_offSelected >= 0) {
+        g_offCoordinate2 >= 0 && g_offSelected >= 0 &&
+        g_offActiveCoord0 >= 0 && g_offActiveCoord1 >= 0 && g_offActiveCoord2 >= 0 &&
+        g_offCoordsInPlace >= 0) {
         g_required = true;
-        UE_LOGI("coords_panel: resolved -- view/c0/sel/dir=0x%X/0x%X/0x%X/0x%X updCursor=%s",
+        s_warned = false;
+        UE_LOGI("coords_panel: resolved -- view/c0/sel/dir=0x%X/0x%X/0x%X/0x%X act=0x%X/0x%X/0x%X inPlace=0x%X triSz=0x%X updCursor=%s",
                 g_offViewCoordinate, g_offCoordinate0, g_offSelected, g_offDirection,
+                g_offActiveCoord0, g_offActiveCoord1, g_offActiveCoord2, g_offCoordsInPlace,
+                g_offTriangleSize,
                 g_updCursorLocationsFn ? "yes" : "NO");
+    } else if (!g_required && g_uiCoordsCls) {
+        if (!s_warned) {
+            s_warned = true;
+            UE_LOGW("coords_panel: resolve incomplete (view=%d c0=%d c1=%d c2=%d sel=%d act0=%d act1=%d act2=%d inPlace=%d fn=%s) -- backoff retry (log-once)",
+                    g_offViewCoordinate, g_offCoordinate0, g_offCoordinate1, g_offCoordinate2,
+                    g_offSelected, g_offActiveCoord0, g_offActiveCoord1, g_offActiveCoord2,
+                    g_offCoordsInPlace, g_updCursorLocationsFn ? "yes" : "NO");
+        }
     }
 }
 
@@ -104,7 +133,9 @@ bool ReadDishAim(DishAim& out) {
     if (!g_required) ResolvePass();
     void* w = Instance();
     if (!w || g_offViewCoordinate < 0 || g_offCoordinate0 < 0 ||
-        g_offCoordinate1 < 0 || g_offCoordinate2 < 0 || g_offSelected < 0)
+        g_offCoordinate1 < 0 || g_offCoordinate2 < 0 || g_offSelected < 0 ||
+        g_offActiveCoord0 < 0 || g_offActiveCoord1 < 0 || g_offActiveCoord2 < 0 ||
+        g_offCoordsInPlace < 0)
         return false;
     auto* p = reinterpret_cast<uint8_t*>(w);
     auto rd = [&](int32_t off, float& x, float& y) {
@@ -115,8 +146,13 @@ bool ReadDishAim(DishAim& out) {
     rd(g_offCoordinate0, out.c0X, out.c0Y);
     rd(g_offCoordinate1, out.c1X, out.c1Y);
     rd(g_offCoordinate2, out.c2X, out.c2Y);
+    if (g_offTriangleSize >= 0) rd(g_offTriangleSize, out.triSizeX, out.triSizeY);
     std::memcpy(&out.selected, p + g_offSelected, sizeof(int32_t));
     out.direction = (g_offDirection >= 0 && *(p + g_offDirection)) ? 1 : 0;
+    out.activeCoord[0] = *(p + g_offActiveCoord0) != 0;
+    out.activeCoord[1] = *(p + g_offActiveCoord1) != 0;
+    out.activeCoord[2] = *(p + g_offActiveCoord2) != 0;
+    out.coordsInPlace = *(p + g_offCoordsInPlace) != 0;
     return true;
 }
 
@@ -139,16 +175,21 @@ bool WriteCursorOnly(float viewX, float viewY) {
 }
 
 // v109: the COMMITTED-coords apply (the discrete triangulation locks). Writes
-// Coordinate_0/1/2 + selected + direction and calls updCursorLocations (repaints
-// the committed triangle + rotates the physical pingDishes) + updateCoordCoords
-// (az/alt text). Does NOT touch viewCoordinate -- the live cursor is owned by the
-// DeskCursorPose stream (WriteCursorOnly). Runs at COMMIT rate (change-gated), so
-// the per-call updCursorLocations dish-setRot loop is fine here (it is NOT per-frame).
+// Coordinate_0/1/2 + selected + direction + activeCoord_0/1/2 + coordsInPlace
+// and calls updCursorLocations (repaints the committed triangle + rotates the
+// physical pingDishes) + updateCoordCoords (az/alt text). Does NOT touch
+// viewCoordinate -- the live cursor is owned by the DeskCursorPose stream
+// (WriteCursorOnly). Runs at COMMIT rate (change-gated), so the per-call
+// updCursorLocations dish-setRot loop is fine here (it is NOT per-frame).
+// The visibility flag writes MUST precede updCursorLocations so the repaint
+// verb sees the gate open.
 bool WriteDishCommitted(const DishAim& in) {
     if (!g_required) ResolvePass();
     void* w = Instance();
     if (!w || g_offCoordinate0 < 0 || g_offCoordinate1 < 0 ||
-        g_offCoordinate2 < 0 || g_offSelected < 0)
+        g_offCoordinate2 < 0 || g_offSelected < 0 ||
+        g_offActiveCoord0 < 0 || g_offActiveCoord1 < 0 || g_offActiveCoord2 < 0 ||
+        g_offCoordsInPlace < 0)
         return false;
     auto* p = reinterpret_cast<uint8_t*>(w);
     auto wr = [&](int32_t off, float x, float y) {
@@ -160,6 +201,10 @@ bool WriteDishCommitted(const DishAim& in) {
     wr(g_offCoordinate2, in.c2X, in.c2Y);
     std::memcpy(p + g_offSelected, &in.selected, sizeof(int32_t));
     if (g_offDirection >= 0) *(p + g_offDirection) = in.direction ? 1 : 0;
+    *(p + g_offActiveCoord0) = in.activeCoord[0] ? 1 : 0;
+    *(p + g_offActiveCoord1) = in.activeCoord[1] ? 1 : 0;
+    *(p + g_offActiveCoord2) = in.activeCoord[2] ? 1 : 0;
+    *(p + g_offCoordsInPlace) = in.coordsInPlace ? 1 : 0;
     if (g_updCursorLocationsFn) {
         ue_wrap::ParamFrame f(g_updCursorLocationsFn);
         if (f.valid()) ue_wrap::Call(w, f);

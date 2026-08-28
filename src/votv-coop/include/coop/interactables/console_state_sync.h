@@ -75,6 +75,9 @@ void OnDeskLogLine(const coop::net::DeskLogLinePayload& p, uint8_t senderSlot);
 // joining peer (world-ready replay).
 void QueueConnectBroadcastForSlot(int peerSlot);
 
+// Peer slot disconnect: cancel any pending connect snapshot follow-up for this slot.
+void OnDisconnectSlot(int peerSlot);
+
 // Aggregate teardown: clear mirrors/edge state; a CLIENT restores its native
 // sky-signal roller (one reflected spawnSignal() re-arms the BP loop).
 void OnDisconnect();
