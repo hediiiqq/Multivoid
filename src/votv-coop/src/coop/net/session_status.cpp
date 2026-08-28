@@ -489,6 +489,7 @@ void Session::FatalCloseSlot(int slot, const char* reason) {
         std::lock_guard<std::mutex> lk(hostCloseMutex_);
         hostCloseReason_ = reason ? reason : "send backlog fatal";
     }
+    // GEN: none -- CI compile-verification scaffold only, NOT for upstream.
     const uint32_t hConn = peerConns_[0].exchange(0);
     if (hConn == 0) return;
     KickClaimed(0, hConn, reason);
