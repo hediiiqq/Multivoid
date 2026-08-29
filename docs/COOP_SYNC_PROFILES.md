@@ -28,9 +28,9 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 
 | System | shape | facets | verdict mix | best evid | authority | mid-join |
 |---|---|---|---:|---|---|---|
-| **Physics props** | prop pipeline | 12 | 6W · 6U | HO | HA/CA/CO/PP/ARB/∅ | snapshot |
+| **Physics props** | prop pipeline | 12 | 5W · 1B · 6U | HO | HA/CA/CO/PP/ARB/∅ | snapshot |
 | **Container** (§4) | verb-shaped | 8 | 2W · 2B · 2NB · 2U | HO | mixed | snapshot |
-| **Chip-pile / clump** (grab-carry-throw) | prop+intent | 12 | 10W · 2U | HO | HA/ARB | snapshot + bind |
+| **Chip-pile / clump** (grab-carry-throw) | prop+intent | 12 | 9W · 1B · 2U | HO | HA/ARB | snapshot + bind |
 | **Trash-bits pile** (counter) | int-pair channel | 5 | 1W · 4U | code | CO/HA/∅ | snapshot |
 | **Kerfur** (NPC⇄prop convert + skins) | host-sim + verb | 9 | 4W · 5U | HO | HA/PP | snapshot + adopt |
 | **NPC host-sim** (generic creatures) | host-sim stream | 5 | 4W · 1U | HO | HA | snapshot |
@@ -183,7 +183,7 @@ NOT SYNCED (world/misc): client clock never free-runs (TimeScale forced 0); bala
 | 6 | destroy | U | code | CO | `remote_prop::OnDestroy` **[trust gap: no arbiter]** | park / replay |
 | 7 | stick-to-surface | U | code | CO | `OnStickState` | snapshot (physFlags) |
 | 8 | convert pile⇄clump | W | HO | HA | `remote_prop::OnConvert` | PropSnapPos reconcile |
-| 9 | chip-pile grab/throw request | W | HO | ARB | `trash_channel::OnGrabIntent` | staged |
+| 9 | chip-pile grab/throw request | B | HO | ARB | `trash_channel::OnGrabIntent` **[FIELD 2026-08-29: client carry broken in field session; fix in trash_use_intercept.cpp unverified]** | staged |
 | 10 | join-window position correction | W | log | HA | `event_dispatch_entity::PropSnapPos` (F1 probe) | THIS is the correction |
 | 11 | identity stability (save/rejoin) | U | code | HA | `CreateOrAdoptPropMirror` / `MarkPropElement` | seed + sweep |
 | 12 | grab/drop sound (native-parity envelope) | U | code | ∅ | `prop_sound` (receiver-local, plays the material's physSound row) | rides the grab/release edge |
@@ -194,7 +194,7 @@ NOT SYNCED: local fall/free-sim physics (intentional SP-parity); pose while NOT 
 | # | facet | V | E | Auth | cite | mid-join |
 |---|---|---|---|---|---|---|
 | 1 | host grab → clump | W | HO | HA | `trash_channel::NoteClumpBorn` | snapshot |
-| 2 | client grab request | W | HO | ARB | `trash_channel::OnGrabIntent` | none |
+| 2 | client grab request | B | HO | ARB | `trash_channel::OnGrabIntent` **[FIELD 2026-08-29: client carry broken in field session -- unbound native aim cancelled without proxy query, and same-gesture input re-entry immediately fired ThrowIntent dropping clump on pickup frame; fix in trash_use_intercept.cpp unverified]** | none |
 | 3 | carry pose (hand-follow) | W | HO | HA | `puppet_carry_drive::Tick` | freeze-on-gap |
 | 4 | client throw | W | HO | ARB | `trash_grab_intent::OnThrowIntent` | none |
 | 5 | re-pile (land → chipPile) | W | HO | HA | `trash_channel::OnHostConvert` | key reconcile |
