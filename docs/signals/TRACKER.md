@@ -49,6 +49,41 @@ generic device layer, not the signal pipeline.
 
 ---
 
+## TRASH-CARRY 2026-08-30 — four rounds, abandoned, and the reason is structural
+
+> The client-carries-trash-invisibly defect (FIELD-2026-08-29b) was attempted over four rounds and
+> dropped. The DIRECTION is right and is worth keeping; the blocker is the interceptor's failure
+> contract, which no amount of local care fixes.
+>
+> **What was established and is reusable.** The ghost block in `trash_use_intercept.cpp` exists so a
+> client cannot run the native `playerGrabbed` locally, mint an unsynchronised clump, destroy the
+> local pile and seed a host-invisible chain the quiescence sweep can no longer retire. The right
+> shape is: keep cancelling the native dispatch on every path, and ADDITIONALLY send a `GrabIntent`
+> (kind 78, 8-byte payload) when a live host-authoritative proxy corresponds to the aimed pile.
+> Correspondence must use the criteria `pile_spawn_bind.cpp:126` already uses -- squared distance
+> `<= 1.0f` AND equal `chipType` -- plus a unique-candidate rule: exactly one match, else fail closed.
+> A failed location read must be rejected: `TryGetActorLocation` ignores `GetRaw`'s result and returns
+> true unconditionally (`engine.cpp:386-391`), so an exact `(0,0,0)` has to be treated as failure (with
+> the accepted limit that a pile genuinely at the world origin then fails closed). Pending state and
+> the gesture latch must be armed only on a `SendReliable` that returned true.
+>
+> **Why it was abandoned.** `SafeCallInterceptor` returns false on a fault, and false means "do not
+> intercept" -- so the original `ProcessEvent` runs and the client executes the native grab. Any
+> fallible work in the interceptor therefore fails OPEN into exactly the chain the block defends
+> against. Wrapping the work in the house `__try/__except` does not close it: the six callees the probe
+> needs -- `IsChipPile` (cold path uses mutexes, `unordered_map`, `wstring` via `ResolveExtraBases`),
+> `IsBoundMirrorNative` (mutex-backed lookup), `ResolveMirrorEidByActor` (fills a `std::vector`),
+> `TryGetActorLocation` (constructs a `ParamFrame` whose buffer allocates on every positive-sized call),
+> `GetChipType` (inserts into a mutex-protected map on a miss), and the proxy search (transitively
+> allocating) -- can all allocate or lock. And the target compiles with `/EHa`
+> (`CMakeLists.txt:698`), so a C++ throw becomes an SEH exception and lands in the same fail-open path.
+>
+> **What a real fix needs, so the next attempt does not rediscover this.** Either (a) make the probe
+> genuinely allocation-free and lock-free so nothing inside it can fault or throw, or (b) change the
+> interceptor's failure contract so that a fault at this seam defaults to INTERCEPTED rather than
+> not-intercepted. (b) is a change to shared machinery and affects every interceptor, so it is a
+> deliberate design decision rather than a side effect of a trash fix.
+
 ## FIELD-2026-08-29b — five defects root-caused from two synchronised logs, and one that is not a defect
 
 > A second scripted session, both peers on ONE machine with `interactable_log=1` and `window_log=1`,
