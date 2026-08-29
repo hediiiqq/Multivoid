@@ -49,6 +49,51 @@ generic device layer, not the signal pipeline.
 
 ---
 
+## FIELD-2026-08-29b — five defects root-caused from two synchronised logs, and one that is not a defect
+
+> A second scripted session, both peers on ONE machine with `interactable_log=1` and `window_log=1`,
+> timestamp-aligned. That correlation is what made these tractable: it separates "never sent" from
+> "sent, not applied" from "applied, not rendered". None of the five needs a wire change.
+>
+> - **Trash carry is one-way** (client carries, host does not see it; host carries, client does).
+>   `trash_use_intercept.cpp:212-243` cancels the client's `use` input outright for an unbound native
+>   chipPile, treating it as an identity-less ghost; paired with release this fires an immediate
+>   throw-intent drop on the same tick. `COOP_SYNC_MAP.md:108` already says the hand-item lane routes
+>   only an `Aprop_C` in `holding_actor` and leaves "trash clump/pile carry (non-`Aprop_C`) unchanged" —
+>   so the asymmetry is host spawns replicating while client ones are suppressed. Fixable in `src/coop/`.
+> - **Cremator does nothing on the observer.** `Acremator_C` has no adapter — it is `OUT (compound
+>   machine) — Defer` in the 2026-06-08 sweep catalog and was never revisited. It is an `Aactor_save_C`
+>   with a persistent `Key`, so `ApplianceState=35` + `KeyedTogglePayload` would carry it with NO bump.
+>   Side finding: `trash_collect_sync.cpp:385` broadcasts the cremator DOOR (`prop_swinger_crematorDoor_C`)
+>   as an untracked prop with `eid=0`, which the receiver rejects as `no local match`.
+> - **Bucket of water is unsynchronised entirely.** `prop_bucket_C` liquid fill state has no lane, and
+>   the pour splash actors (`prop_sponge_bucketPour_C`) only spawn on the host, so a client pour produces
+>   nothing anywhere else.
+> - **Window cleaning is NOT a defect.** All four windows were already `clean=1.000` and the sponge was
+>   dry because of the bucket, so the game never decreased the float and `window_sync` had nothing to
+>   observe. The `W | ST` row is selftest-only evidence and the selftest drove the clean directly; the
+>   live chain (bucket -> sponge -> window) had never been exercised end to end. Behaviour as coded.
+> - **Items vanish on drop, intermittently.** TWO defects sharing one symptom. (a) Sender: the client
+>   omits `PropDropIntent` when the dropped prop's key is absent from `g_parkedKeys` — a FIFO evicting
+>   after 64 destroys — and client `Aprop_C` spawns are separately suppressed (`prop_lifecycle.cpp:212`),
+>   so the item exists only locally. (b) Receiver: a queued `PropDestroy` re-applies after the prop was
+>   re-placed and re-bound, and the key-fallback lookup kills the fresh actor.
+>
+> **A fix for the vanish was attempted over three rounds and ABANDONED.** Recorded so the next attempt
+> does not repeat it: the parked-key filter is the v122 no-passive-mint boundary and must NOT be
+> relaxed — without it the host spawns whatever class the client supplies, and that path has no class
+> whitelist. Moving enrolment to the grab/use/takeObj seams is the right direction, but `ParkKey` is
+> game-thread-only while the container-extract observer can run on a task-graph worker. `PropDestroyPayload`
+> carries no generation and registry ids are reusable (`registry.h:13`), so eid equality cannot separate a
+> stale destroy from a re-bound same-eid actor; a local bind generation is needed. Cancel-on-spawn must
+> happen after the replacement is validated, never at send time.
+>
+> **Unrelated defect found on the way:** `HasLoadTailQuiesced()` is `g_sweepFired`
+> (`join_membership_sweep.cpp:702`), assigned only in client reconciliation, and `TickClientNpcs()`
+> returns immediately on a host (`npc_mirror.cpp:632`). So it is permanently false on a normal host and
+> every host actor-miss is erroneously eligible for deferral. Harmless today only because the drain is
+> client-only — the host entries simply accumulate until teardown.
+
 ## FIELD-2026-08-29 — hands-on report from a 2-player session (fork build b143)
 
 > Reported by players during ordinary play on a fork of b143 (the only code delta is a dish-pose
