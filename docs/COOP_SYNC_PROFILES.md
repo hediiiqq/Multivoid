@@ -313,7 +313,7 @@ NOT SYNCED: drone flight AI/pathing (client tick suppressed); the order economy 
 | 6 | desk unit-1 AUDIO fx | B | HO | CO | `OnDeskSndFx` (+[dev] `desk_snd_selftest`) **[take-4 R5; v115 fix unverified]** | loops re-asserted |
 | 7 | download-SIM 7ch outputs | B | HO | HA | `desk_sim_sync::Tick` **[take-4 OPEN-0; v112 fix unverified]** | stream re-primes |
 | 8 | live coords cursor | B | HO | CA | `desk_cursor_sync::Tick` **[take-4 OPEN-1 jerk, unresolved]** | stream re-primes |
-| 9 | dish committed-aim locks | B | HO | CA | `console_state_sync::OnDishAim` **[take-4 R3 invisible on observer (symmetric); v144 activeCoord_0..2 + coordsInPlace flags unverified]** | connect snapshot + holder re-assert |
+| 9 | dish committed-aim locks | B | HO | CA | `console_state_sync::OnDishAim` **[take-4 R3 invisible on observer (symmetric); v144 replicates activeCoord_0..2 + coordsInPlace and REFUTES the gate hypothesis: hands-on 2026-08-29, the flags arrive and the triangle still does not draw. The gate is NOT the missing piece. Next suspects: the derived fields (triangle_position / triangle_size / perim / Line_0..2 / coordinate_middle) are not recomputed by updCursorLocations on a peer that never ran movePointToCursor, or the per-edge dynmat MIDs are never repainted there]** | connect snapshot + holder re-assert |
 | 10 | sky-signal SET | U | code | HA | `OnSkySignalState` | point-to-point snapshot |
 
 NOT SYNCED: CDOWN animated log family (filtered, regenerable); U2 gauge/detector sounds (BUG-3); SARV/spectrum remap (display-local); ping-FSM stage visuals on observers.
