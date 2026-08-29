@@ -34,13 +34,9 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 
 constexpr auto kSkyPoll       = std::chrono::milliseconds(1000);  // host set poll + client sweep
 constexpr auto kDeskPoll      = std::chrono::milliseconds(1000);  // claimed cadence + unclaimed edge poll
-constexpr auto kDishInterval      = std::chrono::milliseconds(330);   // ~3 Hz claimed stream
-constexpr auto kDishReassert      = std::chrono::milliseconds(2000);  // ~0.5 Hz claimed self-healing re-assert
-constexpr auto kDishFollowUpDelay = std::chrono::milliseconds(3000);  // ~3 s host connect-snapshot follow-up (closes join vs drain race)
-constexpr auto kDishFollowUpInterval = std::chrono::milliseconds(1000); // ~1 s repeat cadence during follow-up window
-constexpr auto kDishFollowUpMaxDuration = std::chrono::milliseconds(15000); // ~15 s overall deadline from join
-constexpr int  kMaxSkyRows        = 15;                               // 5 parts -- far above the ~12 native cap
-const wchar_t* const kDeskClaim   = L"desk";
+constexpr auto kDishInterval  = std::chrono::milliseconds(330);   // ~3 Hz claimed stream
+constexpr int  kMaxSkyRows    = 15;                               // 5 parts -- far above the ~12 native cap
+const wchar_t* const kDeskClaim = L"desk";
 
 // ---- sky-signal state -------------------------------------------------------
 // g_skyMirror: HOST = the last broadcast set; CLIENT = the last wire-applied
@@ -85,22 +81,6 @@ constexpr size_t kLogReadMax = 1100;
 // ---- dish aim ---------------------------------------------------------------
 CP::DishAim g_dishLastSent;
 Clock::time_point g_nextDish{};
-Clock::time_point g_nextDishReassert{};
-
-// ---- dish aim connect follow-up (host-only) --------------------------------
-// Closes the race where a live row R applied on the host game thread AFTER the
-// initial connect snapshot S was captured, but the occupant stood up before
-// the occupant's re-assert fired; also overcomes joiner-side widget init delay
-// where early snapshots land before the receiver's panel is ready. The host
-// sends aim snapshots repeatedly (~1 Hz) from ~3 s post-join until a 15 s deadline.
-struct DishAimFollowUp {
-    bool armed = false;
-    bool sentAny = false;
-    uint32_t generation = 0;
-    Clock::time_point nextAttempt{};
-    Clock::time_point deadline{};
-};
-DishAimFollowUp g_dishFollowUp[coop::net::kMaxPeers];
 
 bool RowIdentityEq(const SR::SignalRow& a, const SR::SignalRow& b) {
     // Exact float equality is CORRECT here: every non-host copy of a row was
@@ -276,29 +256,6 @@ void SendDeskState(coop::net::Session* s, const CD::Scalars& sc, uint8_t adopt, 
         s->SendReliableToSlot(toSlot, coop::net::ReliableKind::DeskState, &p, sizeof(p));
 }
 
-bool SendDishAimSnapshot(coop::net::Session* s, int peerSlot) {
-    if (!s || !CD::EnsureResolved() || !CD::Instance()) return false;
-    CP::DishAim aim;
-    if (!CP::ReadDishAim(aim)) return false;
-    const uint8_t holder = coop::device_occupancy::HolderOf(kDeskClaim);
-    coop::net::DishAimStatePayload p{};
-    p.c0X = aim.c0X; p.c0Y = aim.c0Y;
-    p.c1X = aim.c1X; p.c1Y = aim.c1Y;
-    p.c2X = aim.c2X; p.c2Y = aim.c2Y;
-    p.selected = aim.selected;
-    p.direction = aim.direction;
-    p.flags = (aim.activeCoord[0] ? coop::net::dishaim_flags::kActiveCoord0 : 0) |
-              (aim.activeCoord[1] ? coop::net::dishaim_flags::kActiveCoord1 : 0) |
-              (aim.activeCoord[2] ? coop::net::dishaim_flags::kActiveCoord2 : 0) |
-              (aim.coordsInPlace ? coop::net::dishaim_flags::kCoordsInPlace : 0);
-    if (holder == 0xFF) {
-        p.flags |= coop::net::dishaim_flags::kSnapshot;
-        return s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::DishAimState, &p, sizeof(p), 0);
-    } else {
-        return s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::DishAimState, &p, sizeof(p), holder);
-    }
-}
-
 // ---- desk log lines (v70): the producer diff --------------------------------
 // The terminal text is ONE local monotone sequence (writeToCoordLog_2 appends
 // + trims to the last 1000 chars), so the largest suffix(baseline) ==
@@ -455,8 +412,8 @@ void Tick() {
     }
     if (cdUp && coop::device_occupancy::LocalHolds(kDeskClaim) && now >= g_nextDish) {
         g_nextDish = now + kDishInterval;
-        // Field-compare dedupe (NOT memcmp: DishAim has tail padding after
-        // coordsInPlace; indeterminate stack padding would defeat the
+        // Field-compare dedupe (NOT memcmp: DishAim has tail padding after the
+        // v70 direction byte; indeterminate stack padding would defeat the
         // dedupe and turn the 3 Hz poll into an unconditional stream).
         // v109: the LIVE cursor (viewCoordinate) is NO LONGER on this reliable lane --
         // it streams on the unreliable DeskCursorPose lane (coop::desk_cursor_sync),
@@ -468,57 +425,18 @@ void Tick() {
             return a.c0X == b.c0X && a.c0Y == b.c0Y &&
                    a.c1X == b.c1X && a.c1Y == b.c1Y &&
                    a.c2X == b.c2X && a.c2Y == b.c2Y &&
-                   a.selected == b.selected && a.direction == b.direction &&
-                   a.activeCoord[0] == b.activeCoord[0] &&
-                   a.activeCoord[1] == b.activeCoord[1] &&
-                   a.activeCoord[2] == b.activeCoord[2] &&
-                   a.coordsInPlace == b.coordsInPlace;
+                   a.selected == b.selected && a.direction == b.direction;
         };
         CP::DishAim aim;
-        if (CP::ReadDishAim(aim)) {
-            const bool changed = !aimEq(aim, g_dishLastSent);
-            const bool reassert = (now >= g_nextDishReassert);
-            if (changed || reassert) {
-                coop::net::DishAimStatePayload p{};
-                p.c0X = aim.c0X; p.c0Y = aim.c0Y;
-                p.c1X = aim.c1X; p.c1Y = aim.c1Y;
-                p.c2X = aim.c2X; p.c2Y = aim.c2Y;
-                p.selected = aim.selected;
-                p.direction = aim.direction;
-                p.flags = (aim.activeCoord[0] ? coop::net::dishaim_flags::kActiveCoord0 : 0) |
-                          (aim.activeCoord[1] ? coop::net::dishaim_flags::kActiveCoord1 : 0) |
-                          (aim.activeCoord[2] ? coop::net::dishaim_flags::kActiveCoord2 : 0) |
-                          (aim.coordsInPlace ? coop::net::dishaim_flags::kCoordsInPlace : 0);
-                s->SendReliable(coop::net::ReliableKind::DishAimState, &p, sizeof(p));
-                g_dishLastSent = aim;
-                g_nextDishReassert = now + kDishReassert;
-            }
-        }
-    }
-
-    // ---- DISH AIM host connect follow-up (closes join vs drain race + client init delay) ----
-    if (isHost) {
-        for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
-            auto& f = g_dishFollowUp[slot];
-            if (!f.armed) continue;
-            const uint32_t liveGen = s->peerGenerationForSlot(slot);
-            if (liveGen == 0 || liveGen != f.generation || !s->IsSlotWorldReady(slot)) {
-                f = {};
-                continue;
-            }
-            if (now >= f.deadline) {
-                if (!f.sentAny) {
-                    UE_LOGW("console_state: follow-up dish aim snapshot timed out after deadline -> slot %d (desk/widget unavailable or send failed)",
-                            slot);
-                }
-                f = {};
-                continue;
-            }
-            if (now < f.nextAttempt) continue;
-            if (SendDishAimSnapshot(s, slot)) {
-                f.sentAny = true;
-            }
-            f.nextAttempt = now + kDishFollowUpInterval;
+        if (CP::ReadDishAim(aim) && !aimEq(aim, g_dishLastSent)) {
+            coop::net::DishAimStatePayload p{};
+            p.c0X = aim.c0X; p.c0Y = aim.c0Y;
+            p.c1X = aim.c1X; p.c1Y = aim.c1Y;
+            p.c2X = aim.c2X; p.c2Y = aim.c2Y;
+            p.selected = aim.selected;
+            p.direction = aim.direction;
+            s->SendReliable(coop::net::ReliableKind::DishAimState, &p, sizeof(p));
+            g_dishLastSent = aim;
         }
     }
 }
@@ -615,14 +533,8 @@ void OnDishAim(const coop::net::DishAimStatePayload& p, uint8_t senderSlot) {
     for (float v : vals)
         if (!std::isfinite(v)) return;
     // Only the desk-claim holder streams aim; drop anything else.
-    // Connect snapshot exception (narrow): when nobody holds the desk (holder == 0xFF),
-    // accept host-authored snapshot (senderSlot == 0) tagged with kSnapshot.
     const uint8_t holder = coop::device_occupancy::HolderOf(kDeskClaim);
-    if (holder == 0xFF) {
-        if (senderSlot != 0 || !(p.flags & coop::net::dishaim_flags::kSnapshot)) return;
-    } else {
-        if (senderSlot != holder) return;
-    }
+    if (holder == 0xFF || senderSlot != holder) return;
     if (coop::device_occupancy::LocalHolds(kDeskClaim)) return;  // we are the streamer
     if (!CD::EnsureResolved()) return;
     CP::DishAim aim;  // viewX/viewY stay 0 -- WriteDishCommitted ignores them (cursor lane owns viewCoordinate)
@@ -631,18 +543,7 @@ void OnDishAim(const coop::net::DishAimStatePayload& p, uint8_t senderSlot) {
     aim.c2X = p.c2X; aim.c2Y = p.c2Y;
     aim.selected = p.selected;
     aim.direction = p.direction;
-    aim.activeCoord[0] = (p.flags & coop::net::dishaim_flags::kActiveCoord0) != 0;
-    aim.activeCoord[1] = (p.flags & coop::net::dishaim_flags::kActiveCoord1) != 0;
-    aim.activeCoord[2] = (p.flags & coop::net::dishaim_flags::kActiveCoord2) != 0;
-    aim.coordsInPlace = (p.flags & coop::net::dishaim_flags::kCoordsInPlace) != 0;
-    if (CP::WriteDishCommitted(aim)) {
-        // Prime g_dishLastSent from a post-apply ReadDishAim so a mirrored apply
-        // can never be re-authored back onto the wire if the desk claim later flaps to us.
-        CP::DishAim applied;
-        if (CP::ReadDishAim(applied)) {
-            g_dishLastSent = applied;
-        }
-    }
+    CP::WriteDishCommitted(aim);
 }
 
 void OnDeskLogLine(const coop::net::DeskLogLinePayload& p, uint8_t senderSlot) {
@@ -692,26 +593,16 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         // an IDLE occupant sends nothing and a joiner would see STALE locks. Snapshot
         // the current committed coords on connect (the live cursor needs no snapshot --
         // the DeskCursorPose stream re-primes it within one send interval).
-        SendDishAimSnapshot(s, peerSlot);
-    }
-    // Arm host follow-up snapshot ~3 s later to close any live-stream drain race
-    // and overcome client-side widget initialization delays.
-    if (peerSlot > 0 && peerSlot < static_cast<int>(coop::net::kMaxPeers)) {
-        const uint32_t gen = s->peerGenerationForSlot(peerSlot);
-        if (gen != 0) {
-            const auto now = Clock::now();
-            g_dishFollowUp[peerSlot].armed = true;
-            g_dishFollowUp[peerSlot].sentAny = false;
-            g_dishFollowUp[peerSlot].generation = gen;
-            g_dishFollowUp[peerSlot].nextAttempt = now + kDishFollowUpDelay;
-            g_dishFollowUp[peerSlot].deadline = now + kDishFollowUpMaxDuration;
+        CP::DishAim aim;
+        if (CP::ReadDishAim(aim)) {
+            coop::net::DishAimStatePayload p{};
+            p.c0X = aim.c0X; p.c0Y = aim.c0Y;
+            p.c1X = aim.c1X; p.c1Y = aim.c1Y;
+            p.c2X = aim.c2X; p.c2Y = aim.c2Y;
+            p.selected = aim.selected;
+            p.direction = aim.direction;
+            s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::DishAimState, &p, sizeof(p));
         }
-    }
-}
-
-void OnDisconnectSlot(int peerSlot) {
-    if (peerSlot >= 0 && peerSlot < static_cast<int>(coop::net::kMaxPeers)) {
-        g_dishFollowUp[peerSlot] = {};
     }
 }
 
@@ -728,9 +619,6 @@ void OnDisconnect() {
     g_haveWireSet = false;
     g_assembly = {};
     g_dishLastSent = {};
-    g_nextDish = {};
-    g_nextDishReassert = {};
-    for (auto& f : g_dishFollowUp) f = {};
     g_logBaseline.clear();
     g_logPrimed = false;
 }

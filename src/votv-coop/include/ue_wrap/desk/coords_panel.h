@@ -23,11 +23,8 @@ struct DishAim {
     float c0X = 0, c0Y = 0;       // Coordinate_0
     float c1X = 0, c1Y = 0;       // Coordinate_1
     float c2X = 0, c2Y = 0;       // Coordinate_2
-    float triSizeX = 0, triSizeY = 0; // triangle_size @0x438 (diagnostic read-only)
     int32_t selected = 0;         // the selected cursor index
     uint8_t direction = 0;        // Direction @0x441 -- the catch-gate toggle (v70)
-    bool activeCoord[3] = {};     // activeCoord_0/1/2 @0x451-0x453 -- cursor visibility gates
-    bool coordsInPlace = false;   // coordsInPlace @0x450 -- triangle render gate
 };
 
 // The live validated ui_coordinates_C instance (cached + index-revalidated;

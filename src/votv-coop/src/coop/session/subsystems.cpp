@@ -369,7 +369,6 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     // assemblies + seed brackets must not survive into a recycled occupant.
     coop::signal_sync::OnDisconnectSlot(slot);
     coop::email_sync::OnDisconnectSlot(slot);
-    coop::console_state_sync::OnDisconnectSlot(slot);
     if (slot >= 0 && slot < static_cast<int>(coop::players::kMaxPeers))
         g_joinPlaced[slot] = false;  // rejoin re-places the joiner at the host
     // Shut the chat lane's per-slot seed gate: the NEXT occupant's applied range starts
