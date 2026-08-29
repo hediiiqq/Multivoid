@@ -338,6 +338,18 @@ NOT SYNCED: rest pose (per-peer RNG at BeginPlay, never saved); ambient ticker t
 
 NOT SYNCED: comp RNG rate (local sim); level-up ID re-mint per-peer (OPEN-5).
 
+**R17 attempt 2026-08-29 -- ABANDONED, and what it found.** A verb-edge capture was built and then reverted; no code from it ships. The intended shape (`docs/LESSONS.md:3302-3309`: capture at the native verb edge instead of polling) is correct in principle, and the three mutating verbs -- `comp_uploadData`, `saveSignal`, `deleteSignal` -- ARE observable via the existing `vm_dispatch` `0x45` substrate, which `drive_sync` already registers. It was abandoned because the surrounding reliability semantics cannot support it as-is. Recorded so the next attempt starts here rather than rediscovering it:
+
+1. **The substrate offers only an ENTRY edge.** At the edge the mutation has not happened, so the value cannot be read there. A deferred read plus a single dirty bit CANNOT be lossless: two mutations before the drain collapse into one capture. Curing the R17 loss class needs a POST-CALL edge, i.e. a substrate feature, not a consumer-side change.
+2. **No drain site is safe from running pre-mutation.** The pump composite is drained on ANY game-thread `ProcessEvent`, including one nested inside the verb body (`src/votv-coop/src/ue_wrap/core/pe_detour.cpp:334`); `DrainPostedTasksAtTopLevel` is not a general re-entrancy barrier, it only defers during the spawn-refusal window. A premature drain is therefore always reachable, and is only harmless if the mark survives it -- i.e. the mark must be cleared on CONFIRMED PUBLICATION, never on attempt.
+3. **`ProcessCompData` advances `g_lastDataKey` and reports success even when the session is disconnected or `SendData` failed.** Because the advanced baseline is what suppresses retries, an unsent change becomes permanently unsendable. A partial blob send counts as failure per `src/votv-coop/include/coop/net/blob_chunks.h:53-56` (success = every chunk accepted).
+4. **The comp scalar path discards both reliable-send results and advances the falling-edge baseline unconditionally**, and the connect replay ignores `SendState`/`SendData` results. A refused send there is never retried. Pre-existing, independent of R17.
+5. **A refused `SavedSignalDelete` corrupts shadow/live index alignment**: the failed row stays in the next shadow while it is gone from the live array, so a subsequent append is read from the wrong index and can be marked sent without being published.
+6. **A transient `ReadRow` failure permanently consumes a legitimate append** -- the row is left or set to `sent = true` on a read failure, so it is never published.
+7. **Simultaneous writers diverge permanently.** The host relay skips the origin (`if (i == originSlot) continue`, `src/votv-coop/src/coop/net/session_relay.cpp:80`): C1 writes A, C2 writes B, the host orders A then B -> host=B, C1=B, C2=A, and every reconciler sees its own key equal to its baseline, so C2 is never repaired.
+
+Items 3-6 are silent-loss paths that exist independently of R17 and would each need fixing before an edge-capture rewrite could be trusted.
+
 ### Device-occupancy — `coop/interactables/device_occupancy`
 | # | facet | V | E | Auth | cite | mid-join |
 |---|---|---|---|---|---|---|
