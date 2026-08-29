@@ -88,11 +88,14 @@ generic device layer, not the signal pipeline.
 >   logs show successful joins on both DIRECT and P2P once established, so this is a
 >   join-handshake reliability question, not a topology one.
 >
-> Separately, and NOT a mod defect: the joining peer's client stalls to a few FPS, stops acking,
-> and the host closes the link with `Connection dropped` after `qual` collapses to -100 and
-> `unacked` climbs — i.e. the reported "kicks" and the reported low FPS are one event, not two.
-> The host also logged 380 frame hitches in one session, the worst measured in whole seconds, with
-> no `[HITCH-SRC]` attribution — engine-side by the log's own definition.
+> Separately: the joining peer's client stalls to a few FPS, stops acking, and the host closes the
+> link with `Connection dropped` after `qual` collapses to -100 and `unacked` climbs — i.e. the
+> reported "kicks" and the reported low FPS are one event, not two. The client-side pump stall was
+> root-caused to the unbounded reliable drain in `event_feed::Update`, and a soft 8 ms per-tick time
+> box now bounds it (uncompiled, unplayed). The accepted residual is one-handler overshoot plus
+> head-of-line delay whose known-sensitive case is a late `PropRelease`. The host also logged 380
+> frame hitches in one session, the worst measured in whole seconds, with no `[HITCH-SRC]` attribution
+> — engine-side by the log's own definition.
 
 ## BUGS-v111 — the 2026-07-16 hands-on verdict (5 bugs, ALL root-caused)
 

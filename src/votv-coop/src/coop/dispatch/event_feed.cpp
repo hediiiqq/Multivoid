@@ -48,6 +48,7 @@
 #include "ue_wrap/core/log.h"
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -194,6 +195,19 @@ void Update(net::Session& session, void* localPlayer) {
     // else falls to the default, which chains the three Handle*Event family
     // routers (each returns true iff it owns msg.kind -- the family's own switch
     // is the single membership declaration; see event_dispatch.h).
+    //
+    // Soft time-boxed reliable message drain: processes delivered messages in strict FIFO order
+    // against an 8 ms per-tick budget (checked after each handler runs, with a one-handler
+    // overshoot) to mitigate frame stalls. Messages remaining in the queue are drained across
+    // subsequent ticks.
+    //
+    // Backlog caveat: a deep queue delays reliable messages behind it. PropRelease is the
+    // known-sensitive case (a late apply can re-launch an already-settled prop, and trash
+    // proxies lack the 500 ms fallback). Accepted because deep backlogs occur at join, behind
+    // the loading screen, when nothing is being thrown.
+    constexpr auto kDrainBudget = std::chrono::milliseconds(8);
+    const auto drainStartTime = std::chrono::steady_clock::now();
+
     net::Session::ReliableMessage msg;
     while (session.TryGetReliable(msg)) {
         switch (msg.kind) {
@@ -610,6 +624,9 @@ void Update(net::Session& session, void* localPlayer) {
                     static_cast<unsigned>(msg.kind));
             break;
         }
+        }
+        if (std::chrono::steady_clock::now() - drainStartTime >= kDrainBudget) {
+            break;
         }
     }
 }
