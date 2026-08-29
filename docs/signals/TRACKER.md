@@ -49,6 +49,51 @@ generic device layer, not the signal pipeline.
 
 ---
 
+## FIELD-2026-08-29 — hands-on report from a 2-player session (fork build b143)
+
+> Reported by players during ordinary play on a fork of b143 (the only code delta is a dish-pose
+> LerpWindow interp; protocol 143, unmodified lanes). **No client-side logs were captured** — the
+> second player declined — so every item below is an OBSERVATION, not a root cause. Recorded here
+> because three of them contradict rows currently marked `W`, and two are the FIRST observation
+> ever of rows marked `U`. Diagnosis where present came from reading the code afterwards.
+>
+> - **F1 · Workbench craft/disassembly loses items (client-operated).** ROOT-CAUSED by reading:
+>   the client's `craftItem` destroys the input props and that destroy replicates, while the output
+>   props are client-minted and refused by the host-auth spawn policy (`CLIENT Aprop spawn NOT
+>   authored (host-auth skip)`). Host ends with inputs gone and nothing produced — the group loses
+>   the items. Same class as the coin-gun A37/A38 "replicated cost / unreplicated benefit"; remedy
+>   shape is the same host-arbitrated request, which needs a new wire kind.
+> - **F2 · Cremator does nothing on the observer.** ROOT-CAUSED by reading: `Acremator_C` has NO
+>   adapter at all — it is `OUT (compound machine) — Defer` in the 2026-06-08 interactables sweep
+>   catalog and was never revisited. Client-side `useLever` burns locally, the prop destroys
+>   replicate, and the machine itself never closes, ignites, or sounds on the other peer. It is an
+>   `Aactor_save_C` with a persistent `Key`, so `ApplianceState=35` + `KeyedTogglePayload` would
+>   carry it with NO protocol bump.
+> - **F3 · Garage doors do not cross (either direction).** Matches the never-fixed take-4 root R9.
+>   The receiving peer fails `ResolveFast(key)`, parks the message in `pending_`, and drops it at
+>   the 25 s `kPendingTTL` — so "expired" in the log is always the downstream symptom of an
+>   identity-resolution failure, never a transport problem. NOTE: `COOP_SYNC_PROFILES.md:150` still
+>   marks this facet `W | HO`, which this report contradicts.
+> - **F4 · Trash sync intermittently lost, and the client cannot pick up baggable trash.**
+>   Contradicts the `W | HO` rows for `trash_channel::OnGrabIntent` (client grab request) and the
+>   clump/grab facets. Not root-caused — no logs.
+> - **F5 · Windows do not clean.** Contradicts `Window-cleaning | clean wipe (min-wins) | W | ST`.
+>   That row's evidence tier is SELFTEST, never hands-on: this is the first field observation of
+>   the facet and it is negative. Not root-caused.
+> - **F6 · Nightmares do not sync.** First observation of the `nightmare (dreamProbability) policy`
+>   row, which stands at `U | code` (single-roller policy re-applied on connect). Not root-caused.
+> - **F7 · Items disappear.** Reported loosely; F1 and F2 both produce exactly this symptom, so it
+>   may be the same thing seen from the player's side rather than a separate defect.
+> - **F8 · The joining peer frequently fails on the first attempt.** Not root-caused. Host-side
+>   logs show successful joins on both DIRECT and P2P once established, so this is a
+>   join-handshake reliability question, not a topology one.
+>
+> Separately, and NOT a mod defect: the joining peer's client stalls to a few FPS, stops acking,
+> and the host closes the link with `Connection dropped` after `qual` collapses to -100 and
+> `unacked` climbs — i.e. the reported "kicks" and the reported low FPS are one event, not two.
+> The host also logged 380 frame hitches in one session, the worst measured in whole seconds, with
+> no `[HITCH-SRC]` attribution — engine-side by the log's own definition.
+
 ## BUGS-v111 — the 2026-07-16 hands-on verdict (5 bugs, ALL root-caused)
 
 > **FIX AS-BUILT (v112, same day):** all five designed out by the 12-round fix /qf
