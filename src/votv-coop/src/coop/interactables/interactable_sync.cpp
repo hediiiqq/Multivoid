@@ -15,6 +15,7 @@
 #include "coop/interactables/interactable_channel.h"  // the generic engine: Adapter + Channel (+ ProbeLog, R alias, WireKey usings)
 
 #include "ue_wrap/devices/appliance.h"     // the 6-class save-actor toggle family (faucet/sink/shower/kitchen/serverBox/wallunit_tapes)
+#include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/devices/door.h"
 #include "ue_wrap/devices/door_box.h"      // v62 lockers + drone-console hinged doors
 #include "ue_wrap/engine/engine.h"        // ReadMainPlayerLookAtActor (the E-press door target)
@@ -125,19 +126,34 @@ const Adapter g_garageAdapter = {
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = CanOpen)
 };
 // Appliance family (6 Aactor_save_C descendants: faucet/sink/shower/kitchen-oven/serverBox/
-// wallunit-tapes). SYMMETRIC single-bool toggles -- none auto-reverts (only doors do), so a
-// symmetric poll never oscillates. ONE adapter covers all six: the ue_wrap::appliance wrapper
-// dispatches by class to the right bool offset + refresh verb (upd/updIsOn/SetActive) so the
-// peer's mesh/FX/audio repaint, not just the field. Key = Aactor_save_C::Key @0x0230. The
-// wall switches/breakers that drive these just flip the bool, which the poll catches -- we
-// never observe the switch. RE: research/findings/props-lifecycle/votv-all-interactables-sweep-catalog-2026-06-08.md.
+// wallunit-tapes + cremator). All ride ReliableKind::ApplianceState (kind 35).
+// ONE channel, ONE index, ONE pending queue. The adapter accepts both device types;
+// TryReadState and ApplyState dispatch by actor class to ue_wrap::appliance or ue_wrap::cremator.
 const Adapter g_applianceAdapter = {
     "appliance", coop::net::ReliableKind::ApplianceState,
-    &ue_wrap::appliance::EnsureResolved,
-    &ue_wrap::appliance::IsAppliance,
-    &ue_wrap::appliance::GetKeyString,
-    &ue_wrap::appliance::TryReadState,
-    [](void* a, bool on) -> bool { return ue_wrap::appliance::ApplyState(a, on); },
+    []() -> bool {
+        const bool app = ue_wrap::appliance::EnsureResolved();
+        const bool crem = ue_wrap::cremator::EnsureResolved();
+        return app && crem;
+    },
+    [](void* obj) -> bool {
+        return ue_wrap::appliance::IsAppliance(obj) || ue_wrap::cremator::IsCremator(obj);
+    },
+    [](void* a) -> std::wstring {
+        if (ue_wrap::appliance::IsAppliance(a)) return ue_wrap::appliance::GetKeyString(a);
+        if (ue_wrap::cremator::IsCremator(a)) return ue_wrap::cremator::GetKeyString(a);
+        return std::wstring();
+    },
+    [](void* a, bool& on) -> bool {
+        if (ue_wrap::appliance::IsAppliance(a)) return ue_wrap::appliance::TryReadState(a, on);
+        if (ue_wrap::cremator::IsCremator(a)) return ue_wrap::cremator::TryReadState(a, on);
+        return false;
+    },
+    [](void* a, bool on) -> bool {
+        if (ue_wrap::appliance::IsAppliance(a)) return ue_wrap::appliance::ApplyState(a, on);
+        if (ue_wrap::cremator::IsCremator(a)) return ue_wrap::cremator::ApplyState(a, on);
+        return false;
+    },
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = CanOpen)
 };
 // Hinged-door storage boxes (v62): the ~19 lockers (locker_C + the two pure
@@ -162,7 +178,7 @@ Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert ->
 Channel g_light{g_lightAdapter};
 Channel g_container{g_containerAdapter};
 Channel g_garage{g_garageAdapter};  // garage has no auto-revert -> Symmetric (no oscillation)
-Channel g_appliance{g_applianceAdapter};  // appliances have no auto-revert -> Symmetric
+Channel g_appliance{g_applianceAdapter};  // appliances & cremator have no auto-revert -> Symmetric
 Channel g_doorBox{g_doorBoxAdapter};  // lockers/console have no auto-revert -> Symmetric
 // Keypads (ApasswordLock_C) are NOT a toggle -- they carry a typed buffer + 3 state bools
 // and their accept verb is unreachable (proven), so forcing them into this Channel was the
@@ -170,7 +186,7 @@ Channel g_doorBox{g_doorBoxAdapter};  // lockers/console have no auto-revert -> 
 // adapter + g_keypad Channel are GONE, not disabled-in-place). KeypadState routes there
 // from event_feed, not through ChannelForKind below.
 
-Channel* ChannelForKind(coop::net::ReliableKind k) {
+Channel* ChannelForKind(coop::net::ReliableKind k, const coop::net::KeyedTogglePayload& /*payload*/) {
     switch (k) {
     case coop::net::ReliableKind::DoorState:      return &g_door;
     case coop::net::ReliableKind::LightState:     return &g_light;
@@ -223,75 +239,103 @@ bool g_useInputObserverInstalled = false;
 void* g_useInputActiveCleared = nullptr;
 bool  g_useInputActivePrior  = true;
 
+void* g_useInputCrematorCleared = nullptr;
+bool  g_useInputCrematorAnimPrior = false;
+
 void OnUseInputPre(void* self, void*, void*) {
-    // Restore a LEAKED door first (audit IMP-3): if the prior dispatch's BP body
-    // SEH-faulted, the POST observer never ran and the cleared door would stay
-    // Active=false forever (bricked). Self-heals on the next E-press.
+    // Restore a LEAKED door or cremator first (audit IMP-3): if the prior dispatch's BP body
+    // SEH-faulted, the POST observer never ran. Self-heals on the next E-press.
     if (g_useInputActiveCleared) {
         ue_wrap::door::SetActive(g_useInputActiveCleared, g_useInputActivePrior);
         g_useInputActiveCleared = nullptr;
     }
+    if (g_useInputCrematorCleared) {
+        ue_wrap::cremator::SetAnim(g_useInputCrematorCleared, g_useInputCrematorAnimPrior);
+        g_useInputCrematorCleared = nullptr;
+    }
     if (!self) return;
     auto* s = g_door.GetSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;  // CLIENT-only
-    if (!ue_wrap::door::EnsureResolved()) return;
-    void* door = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
-    if (!door || !ue_wrap::door::IsDoor(door)) return;
-    const std::wstring key = ue_wrap::door::GetKeyString(door);
-    if (key.empty() || key == L"None") return;  // unkeyed door: native behavior stays
-    g_useInputActivePrior = ue_wrap::door::GetActive(door);  // the REAL gate value to restore
-    ue_wrap::door::SetActive(door, false);  // close the BP CanOpen gate for THIS dispatch
-    g_useInputActiveCleared = door;
+    void* actor = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
+    if (!actor) return;
+
+    if (ue_wrap::door::EnsureResolved() && ue_wrap::door::IsDoor(actor)) {
+        const std::wstring key = ue_wrap::door::GetKeyString(actor);
+        if (key.empty() || key == L"None") return;  // unkeyed door: native behavior stays
+        g_useInputActivePrior = ue_wrap::door::GetActive(actor);  // the REAL gate value to restore
+        ue_wrap::door::SetActive(actor, false);  // close the BP CanOpen gate for THIS dispatch
+        g_useInputActiveCleared = actor;
+        return;
+    }
+
+    if (ue_wrap::cremator::EnsureResolved() && ue_wrap::cremator::IsCremator(actor)) {
+        const std::wstring key = ue_wrap::cremator::GetKeyString(actor);
+        if (key.empty() || key == L"None") return;  // unkeyed cremator: native behavior stays
+        g_useInputCrematorAnimPrior = ue_wrap::cremator::GetAnim(actor);
+        ue_wrap::cremator::SetAnim(actor, true);  // close the BP player_use gate (anim=true skips useLever)
+        g_useInputCrematorCleared = actor;
+        return;
+    }
 }
 
 void OnUseInput(void* self, void*, void*) {
-    // Restore the Active gate the PRE observer cleared -- FIRST, before any
-    // early return below (disconnect race, debounce, ...): every exit path
-    // must put back the SAVED value. The native chain already ran (gated
-    // shut); the host echo is now the only thing that will move this door.
+    // Restore the Active / anim gate the PRE observer cleared -- FIRST, before any early return.
     if (g_useInputActiveCleared) {
         ue_wrap::door::SetActive(g_useInputActiveCleared, g_useInputActivePrior);
         g_useInputActiveCleared = nullptr;
     }
+    if (g_useInputCrematorCleared) {
+        ue_wrap::cremator::SetAnim(g_useInputCrematorCleared, g_useInputCrematorAnimPrior);
+        g_useInputCrematorCleared = nullptr;
+    }
     if (!self) return;
     auto* s = g_door.GetSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;  // CLIENT-only
-    if (!ue_wrap::door::EnsureResolved()) return;
-    void* door = ue_wrap::engine::ReadMainPlayerLookAtActor(self);  // the actor under the cursor at press
-    const bool isDoor = (door && ue_wrap::door::IsDoor(door));
-    // DIAGNOSTIC (gated behind interactable_log -- fires on EVERY E-press, door or not, so it
-    // must NOT be unconditional: log spam on a per-input path costs FPS). Enable it when a door
-    // open misbehaves: no line = observer didn't fire; lookAtActor=0 = the interaction trace had
-    // not populated the aimed actor yet; non-null + isDoor=0 = aiming at a non-door. The
-    // meaningful edges (toggle request sent; host opened/DENIED) are logged unconditionally below
-    // + in OnRequest, so the normal path is visible without this.
-    if (ProbeLog())
-        UE_LOGI("door: use-input fired -- lookAtActor=%p isDoor=%d (role=client, connected)", door, isDoor ? 1 : 0);
-    if (!isDoor) return;             // not aiming at a door -> not ours
-    std::wstring key = ue_wrap::door::GetKeyString(door);
-    if (key.empty() || key == L"None") return;
-    // DEBOUNCE: AmainPlayer_C::InpActEvt_use dispatches on BOTH the press AND the release of one
-    // tap (~0.3s apart), so a single "use" fires this observer TWICE -> two toggles -> the host
-    // opens then immediately closes ("open-closed in 0.3s, nothing changed") and the release's
-    // force-close interrupts the client's mid-open swing -> ajar. Collapse rapid repeats for the
-    // same door into ONE toggle. 300ms < any deliberate re-toggle, > a tap's press-release gap.
-    static std::unordered_map<std::wstring, std::chrono::steady_clock::time_point> s_lastUse;  // GT-only
-    const auto nowTs = std::chrono::steady_clock::now();
-    if (auto it = s_lastUse.find(key); it != s_lastUse.end() && nowTs - it->second < std::chrono::milliseconds(300)) {
-        UE_LOGI("door: use-input hook -> debounced repeat (press+release) key='%ls'", key.c_str());
+    void* actor = ue_wrap::engine::ReadMainPlayerLookAtActor(self);  // the actor under the cursor at press
+    if (!actor) return;
+
+    // Door check:
+    if (ue_wrap::door::EnsureResolved() && ue_wrap::door::IsDoor(actor)) {
+        if (ProbeLog())
+            UE_LOGI("door: use-input fired -- lookAtActor=%p isDoor=1 (role=client, connected)", actor);
+        std::wstring key = ue_wrap::door::GetKeyString(actor);
+        if (key.empty() || key == L"None") return;
+        static std::unordered_map<std::wstring, std::chrono::steady_clock::time_point> s_lastUse;  // GT-only
+        const auto nowTs = std::chrono::steady_clock::now();
+        if (auto it = s_lastUse.find(key); it != s_lastUse.end() && nowTs - it->second < std::chrono::milliseconds(300)) {
+            UE_LOGI("door: use-input hook -> debounced repeat (press+release) key='%ls'", key.c_str());
+            return;
+        }
+        s_lastUse[key] = nowTs;
+        coop::net::KeyedTogglePayload p{};
+        WireKeyFromString(key, p.key);
+        p.action = 0;
+        if (s->SendReliable(coop::net::ReliableKind::DoorOpenRequest, &p, sizeof(p)))
+            UE_LOGI("door: use-input hook -> toggle request key='%ls'", key.c_str());
         return;
     }
-    s_lastUse[key] = nowTs;
-    // Send a pure TOGGLE -- do NOT read isOpened here. isOpened is the animation-COMPLETED flag
-    // and lags the swing, so at POST-player_use it holds the PRE-toggle value and reports the
-    // WRONG intent (press-to-open read "closed" -> sent close -> host closed the door). The host
-    // derives open-vs-close from its own authoritative hold record (OnRequest), which is timing-
-    // robust. p.action is unused by OnRequest (every DoorOpenRequest is a toggle).
-    coop::net::KeyedTogglePayload p{};
-    WireKeyFromString(key, p.key);
-    p.action = 0;
-    if (s->SendReliable(coop::net::ReliableKind::DoorOpenRequest, &p, sizeof(p)))
-        UE_LOGI("door: use-input hook -> toggle request key='%ls'", key.c_str());
+
+    // Cremator check:
+    if (ue_wrap::cremator::EnsureResolved() && ue_wrap::cremator::IsCremator(actor)) {
+        if (!ue_wrap::cremator::IsLookingAtHandle(actor)) return;
+        if (ProbeLog())
+            UE_LOGI("cremator: use-input fired -- lookAtActor=%p isCremator=1 (role=client, connected)", actor);
+        std::wstring key = ue_wrap::cremator::GetKeyString(actor);
+        if (key.empty() || key == L"None") return;
+        static std::unordered_map<std::wstring, std::chrono::steady_clock::time_point> s_lastCrematorUse;  // GT-only
+        const auto nowTs = std::chrono::steady_clock::now();
+        if (auto it = s_lastCrematorUse.find(key); it != s_lastCrematorUse.end() && nowTs - it->second < std::chrono::milliseconds(300)) {
+            UE_LOGI("cremator: use-input hook -> debounced repeat key='%ls'", key.c_str());
+            return;
+        }
+        s_lastCrematorUse[key] = nowTs;
+        coop::net::KeyedTogglePayload p{};
+        WireKeyFromString(key, p.key);
+        p.action = 1;
+        if (s->SendReliable(coop::net::ReliableKind::DoorOpenRequest, &p, sizeof(p)))
+            UE_LOGI("cremator: use-input hook -> activation request key='%ls'", key.c_str());
+        return;
+    }
 }
 
 void InstallUseInputObserver() {
@@ -313,7 +357,7 @@ void InstallUseInputObserver() {
         return;
     }
     g_useInputObserverInstalled = true;
-    UE_LOGI("door: InpActEvt_use PRE+POST observers installed (PRE gates the native toggle; POST restores + sends DoorOpenRequest)");
+    UE_LOGI("door: InpActEvt_use PRE+POST observers installed (PRE gates native execution; POST restores + sends DoorOpenRequest)");
 }
 
 // ---- Receiver index: R-2 -- the six channels register as shared-scan-hub consumers; the
@@ -342,16 +386,35 @@ void Install(coop::net::Session* session) {
 }
 
 void OnReliable(uint8_t kind, const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot) {
-    if (Channel* ch = ChannelForKind(static_cast<coop::net::ReliableKind>(kind)))
+    if (Channel* ch = ChannelForKind(static_cast<coop::net::ReliableKind>(kind), payload))
         ch->OnReliable(payload, senderPeerSlot);
 }
 
 void OnDoorOpenRequest(const coop::net::KeyedTogglePayload& payload, uint8_t senderPeerSlot) {
-    // HOST-only: a client asked to open/close a door. event_feed already trust-gates
-    // senderPeerSlot != 0; OnRequest re-checks the host role. The host applies it (real
-    // guards) and its poll broadcasts the authoritative DoorState back to everyone.
+    // HOST-only: a client asked to interact with an interactable (door toggle or cremator lever pull).
+    // event_feed already trust-gates senderPeerSlot != 0; OnRequest re-checks the host role.
     if (senderPeerSlot == 0) return;  // the host never sends this to itself
-    g_door.OnRequest(payload, senderPeerSlot);
+    const std::wstring key = StringFromWireKey(payload.key);
+    if (key.empty()) return;
+
+    if (g_door.HasKey(key)) {
+        g_door.OnRequest(payload, senderPeerSlot);
+        return;
+    }
+
+    if (void* actor = g_appliance.FindLiveActor(key)) {
+        if (ue_wrap::cremator::IsCremator(actor)) {
+            if (ue_wrap::cremator::IsReady(actor)) {
+                const bool ok = ue_wrap::cremator::ApplyState(actor, true);
+                UE_LOGI("cremator: host activated key='%ls' for client slot %u ok=%d",
+                        key.c_str(), senderPeerSlot, ok ? 1 : 0);
+            } else {
+                UE_LOGI("cremator: client slot %u activation ignored key='%ls' (already active/closed)",
+                        senderPeerSlot, key.c_str());
+            }
+            return;
+        }
+    }
 }
 
 void OnPeerLeft(int peerSlot) {

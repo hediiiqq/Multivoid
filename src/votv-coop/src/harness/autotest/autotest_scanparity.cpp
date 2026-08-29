@@ -32,6 +32,7 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/actors/swinger.h"
 #include "ue_wrap/devices/appliance.h"
+#include "ue_wrap/devices/cremator.h"
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/devices/base_window.h"
 #include "ue_wrap/devices/door.h"
@@ -71,6 +72,7 @@ const ProbeRow kRows[] = {
     {"container",  &ue_wrap::swinger::IsSwinger,        &ue_wrap::prop::GetKeyString,        true},
     {"garage",     &ue_wrap::garage::IsGarage,          &ue_wrap::garage::GetNameKey,        true},
     {"appliance",  &ue_wrap::appliance::IsAppliance,    &ue_wrap::appliance::GetKeyString,   true},
+    {"cremator",   &ue_wrap::cremator::IsCremator,      &ue_wrap::cremator::GetKeyString,    true},
     {"doorbox",    &ue_wrap::door_box::IsDoorBox,       &ue_wrap::door_box::GetNameKey,      true},
     {"keypad",     &ue_wrap::passwordlock::IsPasswordLock, &ue_wrap::passwordlock::GetKeyString, true},
     {"power",      &ue_wrap::power_control::IsPowerControl, &ue_wrap::power_control::GetKeyString, true},

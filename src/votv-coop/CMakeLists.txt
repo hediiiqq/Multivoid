@@ -247,6 +247,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/devices/lightswitch.cpp
     src/ue_wrap/devices/garage.cpp
     src/ue_wrap/devices/appliance.cpp
+    src/ue_wrap/devices/cremator.cpp
     src/ue_wrap/devices/power_control.cpp
     src/ue_wrap/devices/atv.cpp
     src/ue_wrap/devices/drone.cpp

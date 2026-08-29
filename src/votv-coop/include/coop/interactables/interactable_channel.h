@@ -112,6 +112,10 @@ public:
 
     void SetSession(coop::net::Session* s) { session_.store(s, std::memory_order_release); }
     coop::net::Session* GetSession() const { return session_.load(std::memory_order_acquire); }
+    // Query whether this channel has indexed a live instance for `key`.
+    bool HasKey(const std::wstring& key) { return ResolveFast(key) != nullptr; }
+    // Query the live actor pointer for `key` (or nullptr if not found/dead).
+    void* FindLiveActor(const std::wstring& key) { return ResolveFast(key); }
     // Prime the poll baseline for `key`.
     void PreUpdateLastKnown(const std::wstring& key, bool val) {
         std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[key] = val;

@@ -81,6 +81,7 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 | **ATV** | occupant pose | 5 | 5U | code | CA/HA | snapshot |
 | **Shop-order** | client→host commit | 1 | 1U | code | **ARB** | watermark-prime |
 | **Appliance** | 1-bit channel | 1 | 1U | code | CO | snapshot |
+| **Cremator** | 1-bit channel | 1 | 1U | code | CO | snapshot |
 | **Weather** (§5) | field-state | 5 | 1W · 1B · 3U | log | HA | snapshot |
 | **Lamp posts** (§6) | not-synced | 1 | 1W | code | ∅ | none (by design) |
 | **World-events** | replay lanes | 3 | 3U | code | HA | replay / snapshot |
@@ -167,6 +168,7 @@ a take-4 bug that a later unverified fix addressed stays at its last-measured `B
 | ATV | seat contention (mount deny) | U | code | CA | PR #9 `ca89cc1e` + `c4aabe15`: `occupantSlot` per indexed ATV; the deny is a client-side PRODUCER suppression at `device_occupancy::OnUseInputPre` (`ClearAimForDispatch`), and a simultaneous mount is settled by LOWER SLOT WINS in `atv_sync::OnReliable`. Build + smoke only -- the smoke does NOT put two peers on one ATV, so the tie-break has never been observed firing | snapshot (adopt=1 carries `e.occupantSlot`, so a joiner inherits the active driver) |
 | Shop-order | new order forward | HO | code+drill | ARB | v136 `afcbff39`: the intent is a `list_store` ROW NAME only; the host PRICES it from its own table, checks its own balance, rolls its own ETA, confirms an `OrderCount()` +1 edge, then charges (`order_sync::ResolveOne`). GREEN+RED drill on DLL `899E80EDE468AEC1`; NOT hands-on | watermark-prime |
 | Appliance | on/off bool (6 classes) | U | code | CO | `g_applianceAdapter` | snapshot |
+| Cremator | burn cycle toggle | U | code | CO | `g_applianceAdapter` | snapshot |
 | Container (device) | open/closed state | U | code | CO | `interactable_sync` `g_container` (`ReliableKind::ContainerState`) | snapshot |
 
 NOT SYNCED (world/misc): client clock never free-runs (TimeScale forced 0); balance HUD repaint is client-local; daily-task leans on save-transfer for JOIN state (no connect snapshot; email gained the ready-edge SEED 2026-08-23 `0676e5a8` -- join-window rows now delivered); unkeyed doors keep native behaviour; door swing is force-snap not animated when far; serverbox break/fix verbs are invisible (state+`check()` mirror); grime/window FAR vanishes ignored (stream-out); calm turbine world goes silent; idle save-ATVs stay per-peer physics until authored; client never mutates its own shop orders; sub-second event cues escape the 1 Hz poll.
