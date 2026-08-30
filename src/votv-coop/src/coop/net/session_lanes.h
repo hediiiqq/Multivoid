@@ -197,7 +197,8 @@ inline Lane LaneForKind(ReliableKind k) {
     // v148 (water_sync): WaterState rides Normal. Low-rate continuous scalar sync (bucket fill,
     // sponge wetness) arbitrated by the host. Normal lane priority (ahead of bulk snapshot/prop traffic)
     // ensures interactive water operations apply promptly without competing with urgent combat/vitals on High.
-    // Explicitly pinned to satisfy the new ReliableKind lane registration rule (LESSONS.md:2675).
+    // Pinned explicitly as a SEMANTIC declaration, not a requirement: LaneForKind defaults to
+    // Normal, so an unpinned kind would land here anyway. The case states the choice on purpose.
     case ReliableKind::WaterState:        return Lane::Normal;
     default:                           return Lane::Normal;
     }

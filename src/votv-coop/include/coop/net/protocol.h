@@ -4033,7 +4033,7 @@ static_assert(sizeof(KeyedScalarPayload) == 40, "KeyedScalarPayload must be 40 b
 static_assert(sizeof(KeyedScalarPayload) <= 256 - 20 - 8,
               "KeyedScalarPayload must fit in one reliable datagram");
 
-// WaterStatePayload -- bucket fill (height) and sponge wetness (power) scalar sync (WaterState=125).
+// WaterStatePayload -- bucket fill (height) and sponge wetness (power) scalar sync (WaterState=128).
 // Keyed by Aprop_C::Key FName string. Bidirectional continuous float (fills/dips increase,
 // pours/wipes decrease). Host is the arbiter: clients send observed local changes to the host;
 // the host applies and broadcasts authoritative values to all peers including origin.

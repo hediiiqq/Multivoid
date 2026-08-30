@@ -261,7 +261,7 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::WaterState: {
-        // v143: bucket fill state (prop_bucket_C) and sponge wetness (prop_sponge_C) scalar sync.
+        // v148 (authored against v143): bucket fill state (prop_bucket_C) and sponge wetness (prop_sponge_C) scalar sync.
         // HOST-AUTHORITATIVE arbitration: client sends observed local change as a request;
         // host applies and broadcasts authoritative value to ALL peers (including origin);
         // clients apply host value verbatim and prime baseline (no ping-pong).

@@ -297,8 +297,11 @@ void OnReliable(const coop::net::WaterStatePayload& payload, uint8_t senderPeerS
     if (s->role() == coop::net::Role::Host) {
         // HOST ARBITER:
         // Host-slot loopback (senderPeerSlot == 0 on host) is unreachable in normal operation:
-        // host receive routing authenticates remote connections as slots 1+ (session.cpp:659)
-        // and host broadcasts do not enqueue locally (session.cpp:229). Harmless defensive
+        // host receive diverts an unadmitted connection to the admission path (session.cpp:881)
+        // and takes the slot from the authenticated connection, ignoring the header's claimed
+        // slot (session.cpp:517); host broadcasts do not enqueue locally, because host slot 0
+        // holds no connection and SendReliable fans out only over live ones (session.h:656,
+        // session.cpp:277). Citations re-verified 2026-08-30 on v148. Harmless defensive
         // guard for an unreachable case; ignore without logging or deferring.
         if (senderPeerSlot == 0) return;
 
