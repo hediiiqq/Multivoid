@@ -42,7 +42,7 @@ bool HandleEntityEvent(net::Session& session,
 
 // Keyed device-state family: DoorState/LightState/ContainerState/GarageDoorState/
 // ApplianceState (the shared KeyedTogglePayload case), KeypadState,
-// PowerControlState, AtvState, DroneState, WindowCleanState, GrimeState,
+// PowerControlState, AtvState, DroneState, WindowCleanState, GrimeState, WaterState,
 // TrashPileState, KerfurConvert (v78 client apply), DeviceClaim/Sleep/email/
 // inventory/voice.
 // `localPlayer` threads into the KerfurConvert client apply (prop teardown/materialize).

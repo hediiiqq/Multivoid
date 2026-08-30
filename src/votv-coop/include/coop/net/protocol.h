@@ -2749,6 +2749,22 @@ enum class ReliableKind : uint8_t {
                        //         local `sell` toast can legitimately name a DIFFERENT number than
                        //         the host minted. The result line makes that divergence visible
                        //         instead of leaving the seller to trust a toast we know can lie.
+    WaterState = 125,  // 2026-08-30 (v143): bucket fill state (prop_bucket_C::height) and sponge
+                       //     wetness (prop_sponge_C::power) bidirectional scalar sync. Keyed by
+                       //     Aprop_C::Key FName. HOST-AUTHORITATIVE ARBITRATION (not symmetric):
+                       //     the client observes local changes and sends a request; the HOST applies
+                       //     authoritatively and broadcasts to EVERY peer INCLUDING the origin
+                       //     (origin echo ensures convergence across opposing pours without ping-pong;
+                       //     the client applies host value verbatim and primes baseline). Connect
+                       //     replay seeds current state with adopt=1. NOT client-relayed.
+                       //     Payload: WaterStatePayload (40 B). Module: coop/water_sync +
+                       //     ue_wrap/water_prop.
+                       //     NOTE (VERSION DEVIATION): kProtocolVersion intentionally remains 143
+                       //     (deliberate exception to LESSONS.md:4644 / RULE 2). Mixed-build
+                       //     interop is safe: an un-updated v143 peer enqueues kind 125, does not
+                       //     relay it (the whitelist defaults false), and drops it with a warning
+                       //     at event_feed.cpp:623; the consequence is that an un-updated peer
+                       //     has no water sync.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -3964,6 +3980,21 @@ struct KeyedScalarPayload {
 static_assert(sizeof(KeyedScalarPayload) == 40, "KeyedScalarPayload must be 40 bytes");
 static_assert(sizeof(KeyedScalarPayload) <= 256 - 20 - 8,
               "KeyedScalarPayload must fit in one reliable datagram");
+
+// WaterStatePayload -- bucket fill (height) and sponge wetness (power) scalar sync (WaterState=125).
+// Keyed by Aprop_C::Key FName string. Bidirectional continuous float (fills/dips increase,
+// pours/wipes decrease). Host is the arbiter: clients send observed local changes to the host;
+// the host applies and broadcasts authoritative values to all peers including origin.
+// adopt=1 for host connect-snapshot (apply verbatim); adopt=0 for live sync.
+struct WaterStatePayload {
+    WireKey  key;        // 32 -- Aprop_C::Key @0x02E0 (FName string; save-persisted UUID)
+    float    value;      // 4  -- liquid fill height (bucket, 0..38) or wetness power (sponge, 0..1)
+    uint8_t  adopt;      // 1  -- 1 = host connect-snapshot (apply verbatim); 0 = live sync / request
+    uint8_t  _pad[3];    // 3
+};
+static_assert(sizeof(WaterStatePayload) == 40, "WaterStatePayload must be 40 bytes");
+static_assert(sizeof(WaterStatePayload) <= 256 - 20 - 8,
+              "WaterStatePayload must fit in one reliable datagram");
 
 // TrashPileStatePayload -- the trashBitsPile_C collect-counter mirror (TrashPileState=46, v57).
 // amountA/amountB are the pile's two dispense sides (the displayed count is their sum). int16

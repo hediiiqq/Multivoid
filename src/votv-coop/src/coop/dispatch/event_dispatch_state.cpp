@@ -1,6 +1,6 @@
 // coop/event_dispatch_state.cpp -- the keyed device-state reliable-kind case
 // bodies (the KeyedToggle family, KeypadState, PowerControlState, AtvState,
-// DroneState, WindowCleanState, GrimeState, TrashPileState, KerfurConvert,
+// DroneState, WindowCleanState, GrimeState, WaterState, TrashPileState, KerfurConvert,
 // DeviceClaim/Sleep/email/inventory/voice), extracted VERBATIM from
 // event_feed.cpp's Update switch (2026-06-11 modularity extraction; see
 // coop/event_dispatch.h). The CLIENT->HOST intent/request cases moved to
@@ -25,6 +25,7 @@
 #include "coop/props/container_contents_sync.h"  // v124 (R11): the GObjStack slice lane
 #include "coop/props/trash_pile_sync.h"
 #include "coop/interactables/turbine_sync.h"
+#include "coop/interactables/water_sync.h"
 #include "coop/interactables/window_sync.h"
 
 #include "ue_wrap/core/log.h"
@@ -255,6 +256,25 @@ bool HandleStateEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::window_sync::OnReliable(wp, senderSlot);
+        break;
+    }
+    case net::ReliableKind::WaterState: {
+        // v143: bucket fill state (prop_bucket_C) and sponge wetness (prop_sponge_C) scalar sync.
+        // HOST-AUTHORITATIVE arbitration: client sends observed local change as a request;
+        // host applies and broadcasts authoritative value to ALL peers (including origin);
+        // clients apply host value verbatim and prime baseline (no ping-pong).
+        if (msg.payloadLen < sizeof(net::WaterStatePayload)) {
+            UE_LOGW("event_feed: WaterState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::WaterStatePayload));
+            break;
+        }
+        net::WaterStatePayload wp{};
+        std::memcpy(&wp, msg.payload, sizeof(wp));
+        const uint8_t senderSlot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::water_sync::OnReliable(wp, senderSlot);
         break;
     }
     case net::ReliableKind::GrimeState: {

@@ -77,6 +77,7 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 | **Power panel** | mask channel | 1 | 1U | code | CO | snapshot |
 | **Grime** | decrease-only min | 2 | 2U | code | CO | snapshot |
 | **Window-cleaning** | decrease-only min | 1 | 1W | ST | CO | snapshot |
+| **Water-state** (bucket / sponge) | continuous scalar | 2 | 2U | code | ARB | snapshot |
 | **Garbage-chute** | client suppress | 2 | 2U | code | PP/HA | none |
 | **ATV** | occupant pose | 5 | 5U | code | CA/HA | snapshot |
 | **Shop-order** | client→host commit | 1 | 1U | code | **ARB** | watermark-prime |
@@ -105,7 +106,7 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
   SIGNAL pipeline is the opposite: mostly `U/code` or `B/HO` (take-4 caught real bugs; fixes shipped
   unverified).
 - **True arbiters are RARE and enumerable:** device-occupancy, drive-rack, phys-mods, floppybox,
-  laptop-buffer-quad, shop-order, sleep-tally, container-CAS. Everywhere else authority is host-authored
+  laptop-buffer-quad, shop-order, sleep-tally, container-CAS, water-state. Everywhere else authority is host-authored
   one-way or co-authored + host-relay — NOT the syncer-model arbiter (`docs/COOP_SYNCER_MODEL.md` is
   DESIGN, unbuilt). This table is the concrete input to "which facets a dedicated-server migration touches".
 - **The sweep grew the AUTHORITY axis by ONE value — `peer-owned` — and added NO new axis.** Body pose,
@@ -158,6 +159,8 @@ a take-4 bug that a later unverified fix addressed stays at its last-measured `B
 | Grime | process wipe (min-wins) | U | code | CO | `grime_sync::ApplyResolved` | snapshot adopt=1 |
 | Grime | one-shot destroy (super-sponge) | U | code | CO | `grime_sync::ApplyResolved` (value=0) | wiped-keys in snapshot |
 | Window-cleaning | clean wipe (min-wins) | W | ST | CO | `window_sync::ApplyResolved` (+[dev] `window_synth`) | snapshot adopt=1 |
+| Water-state | bucket fill scalar (height) | U | code | ARB | `water_sync::ApplyResolved` | snapshot adopt=1 |
+| Water-state | sponge wetness scalar (power) | U | code | ARB | `water_sync::ApplyResolved` | snapshot adopt=1 |
 | Garbage-chute | tick/pickup AV suppress | U | code | PP | `garbage_sync::IsGarbageInstance` (crash-fix) | none |
 | Garbage-chute | spawner suppression | U | code | HA | `InstallSpawnerSuppressors` (host rolls) | none |
 | ATV | body pose (occupant) | U | code | CA | `atv_sync::SetTarget` | snapshot adopt=1 |
@@ -169,7 +172,7 @@ a take-4 bug that a later unverified fix addressed stays at its last-measured `B
 | Appliance | on/off bool (6 classes) | U | code | CO | `g_applianceAdapter` | snapshot |
 | Container (device) | open/closed state | U | code | CO | `interactable_sync` `g_container` (`ReliableKind::ContainerState`) | snapshot |
 
-NOT SYNCED (world/misc): client clock never free-runs (TimeScale forced 0); balance HUD repaint is client-local; daily-task leans on save-transfer for JOIN state (no connect snapshot; email gained the ready-edge SEED 2026-08-23 `0676e5a8` -- join-window rows now delivered); unkeyed doors keep native behaviour; door swing is force-snap not animated when far; serverbox break/fix verbs are invisible (state+`check()` mirror); grime/window FAR vanishes ignored (stream-out); calm turbine world goes silent; idle save-ATVs stay per-peer physics until authored; client never mutates its own shop orders; sub-second event cues escape the 1 Hz poll.
+NOT SYNCED (world/misc): client clock never free-runs (TimeScale forced 0); balance HUD repaint is client-local; daily-task leans on save-transfer for JOIN state (no connect snapshot; email gained the ready-edge SEED 2026-08-23 `0676e5a8` -- join-window rows now delivered); unkeyed doors keep native behaviour; door swing is force-snap not animated when far; serverbox break/fix verbs are invisible (state+`check()` mirror); grime/window FAR vanishes ignored (stream-out); calm turbine world goes silent; idle save-ATVs stay per-peer physics until authored; client never mutates its own shop orders; sub-second event cues escape the 1 Hz poll; bucket pour splash actors (`prop_sponge_bucketPour_C`) are cosmetic host-only emitters (no client spawn authority under no-passive-mint rule).
 
 
 ### Physics props — `coop/props/`

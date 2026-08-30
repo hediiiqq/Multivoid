@@ -240,6 +240,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/engine/engine_attach.cpp
     src/ue_wrap/devices/door.cpp
     src/ue_wrap/devices/base_window.cpp
+    src/ue_wrap/devices/water_prop.cpp
     src/ue_wrap/devices/grime.cpp
     src/ue_wrap/world/daynightcycle.cpp
     src/ue_wrap/world/skysphere.cpp
@@ -360,6 +361,7 @@ add_library(votv-coop SHARED
     src/coop/world/alarm_sync.cpp
     src/coop/interactables/serverbox_sync.cpp
     src/coop/interactables/window_sync.cpp
+    src/coop/interactables/water_sync.cpp
     src/coop/interactables/grime_sync.cpp
     src/coop/session/player_handshake.cpp
     src/coop/session/player_handshake_prefs.cpp
