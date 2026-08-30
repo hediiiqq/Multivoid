@@ -234,7 +234,7 @@ bool WriteSpongePowerAndApply(void* sponge, float power) {
     if (!f.valid()) {
         return false;
     }
-    const ue_wrap::FName paramName = ue_wrap::fname_utils::StringToFName(L"opac");
+    const R::FName paramName = ue_wrap::fname_utils::StringToFName(L"opac");
     if (!f.Set(L"ParameterName", paramName)) {
         return false;
     }
