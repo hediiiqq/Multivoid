@@ -16,3 +16,25 @@ D3D11Viewport.cpp       # UE4 RHI source, read for the PresentChecked seam
 snp.cpp                 # GNS SNP -- read for the reliability layer
 connections.cpp         # GNS connection state machine
 certstore.cpp           # GNS cert store -- the CertStore_CheckCert finding
+
+# --- Multi Theft Auto (reference/mtasa-blue) -----------------------------------------
+# FORK-LOCAL ADDITION 2026-08-30. These live in the reference/mtasa-blue SUBMODULE, which
+# build-core.yml deliberately never fetches ("third_party only; reference/* never fetched",
+# build-core.yml:68). So on CI they resolve to nothing and check A calls all ten dead, and
+# the gate fails before the compiler ever runs -- the same shape as the two builds lost on
+# 2026-08-30 to a pipeline problem rather than a code one.
+#
+# The gate already fails OPEN for an absent corpus in check B, on the stated reasoning that
+# "a corpus that is absent cannot testify". Check A does not, and that asymmetry is what
+# bites here. The upstream-correct fix is to teach check A the same rule; this allowlist
+# entry is the smaller local one, and it costs only the LINE check on ten MTA citations
+# (their file existence is still asserted by anyone running the gate with submodules).
+CClientGame.cpp             # MTA client game loop -- read for the interpolation arc
+CClientVehicle.cpp          # MTA vehicle mirror
+CEGUIFont.cpp               # MTA CEGUI font
+CGame.cpp                   # MTA server game
+CGraphics.cpp               # MTA graphics
+CObjectSync.cpp             # MTA object sync
+CPedSync.cpp                # MTA ped sync -- the CClientPed::Interpolate shape we copied
+CTickRateSettings.h         # MTA tick rates
+CUnoccupiedVehicleSync.cpp  # MTA unoccupied vehicle sync
