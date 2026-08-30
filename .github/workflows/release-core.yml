@@ -109,7 +109,7 @@ jobs:
     needs: judge
     if: needs.judge.outputs.verdict == 'publish'
     # Remote@main form on purpose (R22) -- same rule as the callers of this file.
-    uses: VOTV-MP/Multivoid/.github/workflows/build-core.yml@main
+    uses: VOTV-MP/Multivoid/.github/workflows/build-core.yml@1e5c2e0957a758217e21ba86dc3082b73fa9ecd3
     with:
       ref: ${{ needs.judge.outputs.tag-sha }}
       source-sha: ${{ needs.judge.outputs.tag-sha }}
