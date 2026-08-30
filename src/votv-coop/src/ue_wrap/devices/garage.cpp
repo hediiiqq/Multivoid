@@ -9,6 +9,7 @@
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 
 namespace ue_wrap::garage {
@@ -29,10 +30,88 @@ void*   g_acivaeFn  = nullptr;  // acivae() -- the NATIVE animated swing (montag
 
 constexpr int32_t kOpenOffFallback = 0x02E8;
 
+// TEMPORARY DIAGNOSTIC (fork-local, 2026-08-31) -- upstream issue #11.
+// A client that joins and loads the host's save world ends up with an EMPTY garage index
+// while the actor is demonstrably there (its own door opens locally). Two candidates could
+// not be separated from the logs: the latched UClass going stale across that world load, or
+// something else stopping IsGarage from matching. This answers it directly: every 10 s it
+// checks that the latched class object is still LIVE, then counts live placed actors two ways
+// -- by the class's FName (a replacement class of the same name shares it, since UE4.27 interns
+// names per string) and by the pointer descendant test IsGarage actually uses. If the name count is nonzero while the pointer count is zero, the
+// latch is the defect and nothing else needs guessing.
+// Costs one GUObjectArray pass per 10 s and stops logging after kDiagMaxLines lines.
+// DELETE once the question is answered.
+void GarageClassDiag() {
+    using namespace std::chrono;
+    static steady_clock::time_point sNext{};
+    static int sLines = 0;
+    constexpr int kDiagMaxLines = 40;
+    if (sLines >= kDiagMaxLines) return;
+    const auto now = steady_clock::now();
+    if (now < sNext) return;
+    sNext = now + seconds(10);
+
+    // Count by CLASS NAME, not by class pointer -- and compare the FName's comparison index
+    // rather than rendering a string, so the walk stays a couple of integer compares per object.
+    //
+    // Why not FindClass: it is CACHED (reflection.cpp:494) and returns the cached UClass while
+    // that object is still live and still named garage_C. It never looks for a NEWER class of the
+    // same name. So a pointer census against it would answer the same stale question the latch
+    // already asks, and "SAME" would prove nothing. The name index is immune to that: it matches
+    // the old class object and a freshly created one alike, which is exactly the case we are here
+    // to detect.
+    // The latched pointer is the very thing under suspicion, so validate it BEFORE reading through
+    // it: NameOf is an unguarded read at +0x18 (reflection.cpp:288). A purged class would fault
+    // here, and a recycled address would hand us an unrelated FName and worthless counts. IsLive
+    // checks the object is still published and not pending-kill, so a false answer here IS the
+    // finding -- report it and stop, rather than walking the array with a dead target.
+    if (!g_garageCls || !R::IsLive(g_garageCls)) {
+        ++sLines;
+        UE_LOGW("garage[diag]: latched class object %p is NOT LIVE -- the resolve latch is stale "
+                "(EnsureResolved never re-resolves; garage.cpp:35). This alone explains an empty "
+                "garage index.", g_garageCls);
+        return;
+    }
+    const R::FName targetName = R::NameOf(g_garageCls);
+    const int32_t n = R::NumObjects();
+    int byClassName = 0, byIsGarage = 0;
+    void*   distinctCls[3] = {nullptr, nullptr, nullptr};  // how many DIFFERENT garage_C classes are live
+    int     distinctCount = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLive(o)) continue;
+        void* cls = R::ClassOf(o);
+        if (!cls) continue;
+        const R::FName cn = R::NameOf(cls);
+        const bool nameHit = (cn.ComparisonIndex == targetName.ComparisonIndex &&
+                              cn.Number == targetName.Number);
+        const bool isLatched = IsGarage(o);
+        if (!nameHit && !isLatched) continue;
+        // Skip the class default object: it is not a placed actor, and counting it turns an
+        // empty world into a misleading 1/1.
+        if (R::ToString(R::NameOf(o)).rfind(L"Default__", 0) == 0) continue;
+        if (nameHit)   ++byClassName;
+        if (isLatched) ++byIsGarage;
+        if (nameHit && distinctCount < 3) {
+            bool seen = false;
+            for (int k = 0; k < distinctCount; ++k) if (distinctCls[k] == cls) { seen = true; break; }
+            if (!seen) distinctCls[distinctCount++] = cls;
+        }
+    }
+    ++sLines;
+    UE_LOGW("garage[diag]: latched=%p | live placed actors: byClassName=%d byIsGarage=%d | "
+            "distinct garage_C classes in use: %d (%p, %p, %p) | objects scanned %d",
+            g_garageCls, byClassName, byIsGarage, distinctCount,
+            distinctCls[0], distinctCls[1], distinctCls[2], n);
+}
+
 }  // namespace
 
 bool EnsureResolved() {
-    if (g_resolved.load(std::memory_order_acquire)) return true;
+    if (g_resolved.load(std::memory_order_acquire)) {
+        GarageClassDiag();  // TEMPORARY -- see above; delete with it.
+        return true;
+    }
 
     void* cls = R::FindClass(L"garage_C");
     if (!cls) return false;
