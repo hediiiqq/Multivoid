@@ -194,6 +194,11 @@ inline Lane LaneForKind(ReliableKind k) {
     // references -- a contents blob for an eid whose PropSpawn has not landed parks and retries,
     // so keeping it in the one Normal FIFO makes the park the rare case, not the norm.
     case ReliableKind::ContainerContents: return Lane::Normal;
+    // v148 (water_sync): WaterState rides Normal. Low-rate continuous scalar sync (bucket fill,
+    // sponge wetness) arbitrated by the host. Normal lane priority (ahead of bulk snapshot/prop traffic)
+    // ensures interactive water operations apply promptly without competing with urgent combat/vitals on High.
+    // Explicitly pinned to satisfy the new ReliableKind lane registration rule (LESSONS.md:2675).
+    case ReliableKind::WaterState:        return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }
@@ -268,6 +273,9 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     // ZERO). A client EmailAppend reaching the host is a protocol violation --
     // event_dispatch_state drops it at the handler; relaying it would re-open the
     // shared-inbox pollution vector one client-side regression wide.
+    // WaterState is NOT relayable (v148): bucket/sponge water is HOST-ARBITRATED. A client
+    // sends an observed local change as a request to the host; the host arbitrates and broadcasts
+    // the authoritative state to everyone including origin. Net-thread relay would bypass arbitration.
     case ReliableKind::EmailDelete:       // v65: email deletes are PLAYER-SYMMETRIC (any peer's del button) -- relay a client's delete to the others
     case ReliableKind::SavedSignalAppend: // v65: saved-signal saves are PRODUCER-SYMMETRIC (download-save/import/copy at the claimed desk) -- relay
     case ReliableKind::SavedSignalDelete: // v65: saved-signal deletes/export-moves are PLAYER-SYMMETRIC -- relay

@@ -90,6 +90,7 @@
 #include "coop/world/sky_sync.h"
 #include "coop/world/time_sync.h"
 #include "coop/interactables/window_sync.h"
+#include "coop/interactables/water_sync.h"
 #include "coop/session/join_progress.h"
 #include "coop/interactables/garbage_sync.h"
 #include "coop/props/trash_channel.h"
@@ -193,6 +194,7 @@ void Install(coop::net::Session& session) {
     coop::comp_sync::Install(&session);      // v65: refiner decode pane (single-simulator stream + passive mirrors)
     coop::voice_chat::Install(&session);     // v66: proximity voice chat (opus over the session; PTT X)
     coop::window_sync::Install(&session);    // v41 base-window dirt scalar (the "main huge window")
+    coop::water_sync::Install(&session);     // bucket fill + sponge wetness scalar sync
     coop::grime_sync::Install(&session);     // v42 surface grime (walls/ceiling/floor dirt decals)
     coop::trash_pile_sync::Install(&session);  // v57 trashBitsPile collect counters (uses 6/7)
     coop::trash_collect_sync::Install(&session);  // chipPile grab observer (InpActEvt_use PRE -> PropDestroy(eid); replaces the retired pile death-watch)
@@ -298,6 +300,7 @@ void ConnectReplayForSlot(int slot) {
     coop::comp_sync::QueueConnectBroadcastForSlot(slot);          // v65 decode-pane adopt (CompState + CompData)
     coop::voice_chat::ReplayPeerStatesToSlot(slot);               // v66 voice mute/disabled states -> joiner
     coop::window_sync::QueueConnectBroadcastForSlot(slot);        // v41 base-window clean (adopt=1)
+    coop::water_sync::QueueConnectBroadcastForSlot(slot);         // bucket + sponge water state (adopt=1)
     coop::grime_sync::QueueConnectBroadcastForSlot(slot);         // v42 surface grime process (adopt=1)
     coop::trash_pile_sync::QueueConnectBroadcastForSlot(slot);    // v57 pile counters (adopt=1) + depleted-key replay
     coop::npc_world_enum::RegisterExistingWorldNpcs(coop::npc_world_enum::NpcEnumOrigin::ConnectEdge);  // pre-existing/level-load NPCs (the save's kerfur) -> joiner adopts its twin
@@ -474,6 +477,7 @@ DisconnectStats DisconnectAll() {
     coop::comp_sync::OnDisconnect();
     coop::voice_chat::OnDisconnect();
     coop::window_sync::OnDisconnect();
+    coop::water_sync::OnDisconnect();
     coop::grime_sync::OnDisconnect();
     coop::trash_pile_sync::OnDisconnect();
     coop::trash_collect_sync::OnDisconnect();
@@ -560,6 +564,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     // mid-verb) and destroyed HERE, one pump tick later, where a ProcessEvent dispatch is safe.
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:coingun"}; coop::coingun_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:window"}; coop::window_sync::Tick(); }         // v41 base-window clean: poll for wipes + deferred-apply retry (symmetric)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:water"}; coop::water_sync::Tick(); }           // bucket fill + sponge wetness: symmetric change poll + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:grime"}; coop::grime_sync::Tick(); }          // v42 surface grime: poll wipes + death-watch destroy + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:movement_ledger"}; coop::movement_ledger::Tick(session); }    // v141 A52 HOST: throttled per-slot summary + the wire-vs-actor divergence sample (an ENGINE read, hence game thread)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:npc_host"}; coop::npc_sync::TickPoseStream(); }    // v37 HOST: read NPCs -> publish EntityPose batch (host-only, no-op on client)
